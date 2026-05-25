@@ -61,6 +61,7 @@ func place(def_id: StringName, position: Vector2i) -> int:
 	_claim_cells(inst.instance_id, position, def.footprint)
 
 	Ledger.post_expense(def.build_cost, "Build %s" % def.display_name, def_id)
+	_register_maintenance(inst, def)
 	EventBus.entity_placed.emit(inst.instance_id)
 	return inst.instance_id
 
@@ -78,6 +79,7 @@ func remove(instance_id: int) -> bool:
 	if refund > 0:
 		Ledger.post_income(refund, "Sell %s" % def.display_name, inst.entity_def_id)
 
+	_unregister_maintenance(instance_id)
 	_release_cells(instance_id, inst.position, def.footprint)
 	var by_def: Array = _by_def_id[inst.entity_def_id]
 	by_def.erase(instance_id)
@@ -145,6 +147,30 @@ func get_instances_in_radius(center: Vector2, radius: float) -> Array[int]:
 
 # --- Internal --------------------------------------------------------------
 
+# EntityDef.maintenance_cost was previously dead schema — read but never
+# applied. Now each placement registers a per-instance daily recurring
+# expense, and remove() unregisters it. Games that want maintenance can set
+# the field in their entities tuning; games that don't, leave it at 0.
+func _register_maintenance(inst: EntityInstance, def: EntityDef) -> void:
+	if def.maintenance_cost <= 0:
+		return
+	Ledger.register_recurring({
+		"id": _maintenance_rule_id(inst.instance_id),
+		"label": "Maintain %s" % def.display_name,
+		"amount": def.maintenance_cost,
+		"kind": Ledger.KIND_EXPENSE,
+		"period": Ledger.PERIOD_DAILY,
+	})
+
+
+func _unregister_maintenance(instance_id: int) -> void:
+	Ledger.unregister_recurring(_maintenance_rule_id(instance_id))
+
+
+func _maintenance_rule_id(instance_id: int) -> StringName:
+	return StringName("maint_%d" % instance_id)
+
+
 func _has_collision(pos: Vector2i, footprint: Vector2i) -> bool:
 	for dx in footprint.x:
 		for dy in footprint.y:
@@ -205,4 +231,8 @@ func load_state(data: Dictionary) -> void:
 		var def := inst.get_def()
 		if def != null:
 			_claim_cells(inst.instance_id, inst.position, def.footprint)
+			# Idempotent re-register: this is a no-op for saves created with
+			# v0.3+ (Ledger already restored the same rule) but fills in
+			# maintenance rules for older saves that pre-date auto-register.
+			_register_maintenance(inst, def)
 	_next_id = data.get("next_id", _next_id)

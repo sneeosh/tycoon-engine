@@ -324,6 +324,41 @@ func _validate_cross_refs() -> void:
 		for unlocked_id in un.unlocks:
 			if not (entity_defs.has(unlocked_id) or agent_types.has(unlocked_id)):
 				load_errors.append("unlock node '%s' unlocks unknown id '%s' (not an entity or agent type)" % [un.id, unlocked_id])
+	_detect_unlock_cycles()
+
+
+# DFS over the unlock graph; flags any back-edge as a cycle. Without this,
+# `try_unlock` on a cyclic node spins forever waiting for prereqs that can
+# never be met.
+func _detect_unlock_cycles() -> void:
+	const WHITE := 0   # unvisited
+	const GRAY := 1    # on the current DFS stack
+	const BLACK := 2   # fully explored
+	var state: Dictionary = {}
+	for id in unlock_nodes.keys():
+		state[id] = WHITE
+	for id in unlock_nodes.keys():
+		if state[id] == WHITE:
+			_cycle_dfs(id, state, [])
+
+
+func _cycle_dfs(node_id: StringName, state: Dictionary, path: Array) -> void:
+	state[node_id] = 1  # GRAY
+	path.append(node_id)
+	var node: UnlockNode = unlock_nodes[node_id]
+	for prereq in node.prerequisites:
+		if not unlock_nodes.has(prereq):
+			continue  # cross-ref validation already reported this
+		if state[prereq] == 1:  # GRAY → back edge
+			var start := path.find(prereq)
+			var cycle: Array = path.slice(start)
+			cycle.append(prereq)
+			var rendered := " -> ".join(cycle.map(func(x): return String(x)))
+			load_errors.append("unlock cycle detected: %s" % rendered)
+		elif state[prereq] == 0:  # WHITE
+			_cycle_dfs(prereq, state, path)
+	path.pop_back()
+	state[node_id] = 2  # BLACK
 
 
 # --- Section / scalar / cell helpers --------------------------------------

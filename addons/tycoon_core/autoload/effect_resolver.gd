@@ -3,8 +3,11 @@ extends Node
 # Prompt 7.
 #
 # Bridges placed EntityInstances and simulation outcomes:
-#   - At day_ended: posts revenue Effects to Ledger, multiplies spawn-rate
-#     Effects into AgentPool.current_spawn_multiplier.
+#   - At `day_ending` (NEW in v0.3.0 — formerly `day_ended`): posts revenue
+#     Effects to Ledger and multiplies spawn-rate Effects into
+#     AgentPool.current_spawn_multiplier. Running pre-settlement means
+#     revenue earned today shows up in *today's* yesterday-breakdown, not
+#     the following day's.
 #   - Per tick: AgentPool pulls satisfaction and need-decay modifiers via
 #     compute_*_modifier_for(...) on the hot path.
 #   - Games pull quality via compute_quality_modifier() in their
@@ -14,39 +17,58 @@ extends Node
 # the bridge from EntityDef.appeal_profile to AgentType.preferences.
 # Game IValueModel / ISatisfactionModel implementations call it.
 #
-# Ordering note: EffectResolver runs AFTER Ledger and AgentPool on day_ended
-# (autoload order). Revenue posted here lands in the *next* day's
-# yesterday-breakdown, not the one just settled. Balance reflects immediately.
-# A pre-settlement signal could fix this; deferred until needed.
+# Performance: the per-tick `compute_*_for(agent)` calls used to iterate
+# `EntityRegistry.instances.values()` and traverse each entity's effect
+# chain. v0.3.0 added a flat `(instance, effect)` cache that's rebuilt only
+# when entities are placed/removed/upgraded. Hot-path scaling is now
+# O(effects) instead of O(entities × effects per entity).
+
+# Each entry: {"inst": EntityInstance, "eff": Effect}
+var _effect_cache: Array = []
+var _cache_dirty: bool = true
+
 
 func _ready() -> void:
+	# Revenue runs at day_ending (before Ledger settles) so the income
+	# lands in the day it was earned for. Spawn-rate runs at day_ended
+	# (after AgentPool recomputes the base curve from aggregate
+	# satisfaction) so our multiplier composes on top of it instead of
+	# being overwritten.
+	EventBus.day_ending.connect(_on_day_ending)
 	EventBus.day_ended.connect(_on_day_ended)
+	EventBus.entity_placed.connect(_invalidate_cache)
+	EventBus.entity_removed.connect(_invalidate_cache)
+	EventBus.entity_upgraded.connect(_invalidate_cache_upgraded)
 
 
-# --- day_ended handlers ---------------------------------------------------
+# --- day boundary handlers ------------------------------------------------
+
+func _on_day_ending(_day: int) -> void:
+	_apply_revenue_effects()
+
 
 func _on_day_ended(_day: int) -> void:
-	_apply_revenue_effects()
 	_apply_spawn_rate_effects()
 
 
 func _apply_revenue_effects() -> void:
 	var total_income: int = 0
 	var total_expense: int = 0
-	for inst: EntityInstance in EntityRegistry.instances.values():
-		for eff: Effect in inst.get_active_effects():
-			if eff.target != Effect.TARGET_REVENUE:
-				continue
-			if not _conditions_active(eff):
-				continue
-			var nearby_count := _agents_in_effect_range(inst, eff.proximity).size()
-			# Revenue effects are "magnitude per nearby agent". For
-			# global (proximity=0), nearby_count is the live agent total.
-			var amount := int(eff.magnitude * nearby_count)
-			if amount > 0:
-				total_income += amount
-			elif amount < 0:
-				total_expense += -amount
+	for entry: Dictionary in _ensure_cache():
+		var eff: Effect = entry["eff"]
+		if eff.target != Effect.TARGET_REVENUE:
+			continue
+		if not _conditions_active(eff):
+			continue
+		var inst: EntityInstance = entry["inst"]
+		var nearby_count := _agents_in_effect_range(inst, eff.proximity).size()
+		# Revenue effects are "magnitude per nearby agent". For
+		# global (proximity=0), nearby_count is the live agent total.
+		var amount := int(eff.magnitude * nearby_count)
+		if amount > 0:
+			total_income += amount
+		elif amount < 0:
+			total_expense += -amount
 	if total_income > 0:
 		Ledger.post_income(total_income, "Effect revenue")
 	if total_expense > 0:
@@ -65,15 +87,15 @@ func _apply_spawn_rate_effects() -> void:
 # the result (typically: agent.satisfaction += result, then clamp).
 func compute_satisfaction_modifier_for(agent: Agent) -> float:
 	var total: float = 0.0
-	for inst: EntityInstance in EntityRegistry.instances.values():
-		for eff: Effect in inst.get_active_effects():
-			if eff.target != Effect.TARGET_SATISFACTION:
-				continue
-			if not _conditions_active(eff):
-				continue
-			if not _agent_in_effect_range(agent, inst, eff.proximity):
-				continue
-			total += eff.magnitude
+	for entry: Dictionary in _ensure_cache():
+		var eff: Effect = entry["eff"]
+		if eff.target != Effect.TARGET_SATISFACTION:
+			continue
+		if not _conditions_active(eff):
+			continue
+		if not _agent_in_effect_range(agent, entry["inst"], eff.proximity):
+			continue
+		total += eff.magnitude
 	return total
 
 
@@ -81,15 +103,15 @@ func compute_satisfaction_modifier_for(agent: Agent) -> float:
 # Added to the base decay rate (positive = faster decay, negative = slower).
 func compute_need_decay_modifier_for(agent: Agent, _need_id: StringName) -> float:
 	var total: float = 0.0
-	for inst: EntityInstance in EntityRegistry.instances.values():
-		for eff: Effect in inst.get_active_effects():
-			if eff.target != Effect.TARGET_NEED_DECAY:
-				continue
-			if not _conditions_active(eff):
-				continue
-			if not _agent_in_effect_range(agent, inst, eff.proximity):
-				continue
-			total += eff.magnitude
+	for entry: Dictionary in _ensure_cache():
+		var eff: Effect = entry["eff"]
+		if eff.target != Effect.TARGET_NEED_DECAY:
+			continue
+		if not _conditions_active(eff):
+			continue
+		if not _agent_in_effect_range(agent, entry["inst"], eff.proximity):
+			continue
+		total += eff.magnitude
 	return total
 
 
@@ -99,16 +121,16 @@ func compute_need_decay_modifier_for(agent: Agent, _need_id: StringName) -> floa
 func compute_spawn_rate_modifier() -> float:
 	var add: float = 0.0
 	var mul: float = 1.0
-	for inst: EntityInstance in EntityRegistry.instances.values():
-		for eff: Effect in inst.get_active_effects():
-			if eff.target != Effect.TARGET_SPAWN_RATE:
-				continue
-			if not _conditions_active(eff):
-				continue
-			if eff.operation == Effect.OP_MULTIPLY:
-				mul *= eff.magnitude
-			else:
-				add += eff.magnitude
+	for entry: Dictionary in _ensure_cache():
+		var eff: Effect = entry["eff"]
+		if eff.target != Effect.TARGET_SPAWN_RATE:
+			continue
+		if not _conditions_active(eff):
+			continue
+		if eff.operation == Effect.OP_MULTIPLY:
+			mul *= eff.magnitude
+		else:
+			add += eff.magnitude
 	return (1.0 + add) * mul
 
 
@@ -116,13 +138,13 @@ func compute_spawn_rate_modifier() -> float:
 # IQualityRating implementation.
 func compute_quality_modifier() -> float:
 	var total: float = 0.0
-	for inst: EntityInstance in EntityRegistry.instances.values():
-		for eff: Effect in inst.get_active_effects():
-			if eff.target != Effect.TARGET_QUALITY:
-				continue
-			if not _conditions_active(eff):
-				continue
-			total += eff.magnitude
+	for entry: Dictionary in _ensure_cache():
+		var eff: Effect = entry["eff"]
+		if eff.target != Effect.TARGET_QUALITY:
+			continue
+		if not _conditions_active(eff):
+			continue
+		total += eff.magnitude
 	return total
 
 
@@ -155,6 +177,35 @@ func appeal_match(agent_type: AgentType, entity_def: EntityDef) -> float:
 		sum += score
 		n += 1
 	return sum / n if n > 0 else 1.0
+
+
+# --- Cache management ----------------------------------------------------
+
+# Returns a flat array of {inst, eff} entries covering every active effect
+# on every placed entity. Rebuilt lazily on first access after a placement
+# change. Callers MUST treat the result as read-only.
+func _ensure_cache() -> Array:
+	if _cache_dirty:
+		_rebuild_cache()
+	return _effect_cache
+
+
+func _rebuild_cache() -> void:
+	_effect_cache.clear()
+	for inst: EntityInstance in EntityRegistry.instances.values():
+		for eff: Effect in inst.get_active_effects():
+			_effect_cache.append({"inst": inst, "eff": eff})
+	_cache_dirty = false
+
+
+func _invalidate_cache(_inst_id: int) -> void:
+	_cache_dirty = true
+
+
+# entity_upgraded has a different signature (id, new_tier); separate handler
+# so we don't need to bind args.
+func _invalidate_cache_upgraded(_inst_id: int, _new_tier: int) -> void:
+	_cache_dirty = true
 
 
 # --- Internal helpers ----------------------------------------------------

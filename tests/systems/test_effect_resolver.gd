@@ -94,7 +94,9 @@ func test_revenue_effect_posts_magnitude_times_nearby_agent_count() -> void:
 	var far := AgentPool.spawn(TEST_TYPE, Vector2(20.0, 20.0))
 
 	var pre_balance := Ledger.get_balance()
-	EventBus.day_ended.emit(1)
+	# v0.3.0: revenue effects fire on day_ending (before Ledger settles)
+	# so income lands in the day it was earned for.
+	EventBus.day_ending.emit(1)
 	# Expected: 2 nearby * 5 = +10
 	assert_eq(Ledger.get_balance(), pre_balance + 10)
 
@@ -109,7 +111,7 @@ func test_revenue_effect_with_zero_proximity_counts_all_live_agents() -> void:
 	AgentPool.spawn(TEST_TYPE, Vector2(99, 99))  # far, still counts
 	AgentPool.spawn(TEST_TYPE, Vector2(-50, -50))
 	var pre_balance := Ledger.get_balance()
-	EventBus.day_ended.emit(1)
+	EventBus.day_ending.emit(1)
 	assert_eq(Ledger.get_balance(), pre_balance + 9)  # 3 * 3
 
 
@@ -120,7 +122,7 @@ func test_revenue_effect_with_no_nearby_agents_posts_nothing() -> void:
 	EntityRegistry.place(TEST_DEF, Vector2i(0, 0))
 	AgentPool.spawn(TEST_TYPE, Vector2(20, 20))  # far away
 	var pre_balance := Ledger.get_balance()
-	EventBus.day_ended.emit(1)
+	EventBus.day_ending.emit(1)
 	assert_eq(Ledger.get_balance(), pre_balance, "no nearby agents → no revenue")
 
 
@@ -132,7 +134,7 @@ func test_negative_magnitude_revenue_effect_posts_expense() -> void:
 	AgentPool.spawn(TEST_TYPE)
 	AgentPool.spawn(TEST_TYPE)
 	var pre_balance := Ledger.get_balance()
-	EventBus.day_ended.emit(1)
+	EventBus.day_ending.emit(1)
 	assert_eq(Ledger.get_balance(), pre_balance - 8)
 
 
@@ -150,7 +152,7 @@ func test_effect_with_active_condition_applies() -> void:
 	EntityRegistry.place(TEST_DEF, Vector2i(0, 0))
 	AgentPool.spawn(TEST_TYPE)
 	var pre := Ledger.get_balance()
-	EventBus.day_ended.emit(1)
+	EventBus.day_ending.emit(1)
 	assert_eq(Ledger.get_balance(), pre + 5)
 
 
@@ -166,7 +168,7 @@ func test_effect_with_inactive_condition_skipped() -> void:
 	EntityRegistry.place(TEST_DEF, Vector2i(0, 0))
 	AgentPool.spawn(TEST_TYPE)
 	var pre := Ledger.get_balance()
-	EventBus.day_ended.emit(1)
+	EventBus.day_ending.emit(1)
 	assert_eq(Ledger.get_balance(), pre, "inactive condition gates effect off")
 
 

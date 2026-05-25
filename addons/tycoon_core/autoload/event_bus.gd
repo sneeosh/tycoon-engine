@@ -7,6 +7,12 @@ extends Node
 # system itself.
 
 signal tick(current_tick: int)
+# `day_ending` fires *before* `day_ended` so listeners that need to post
+# transactions or state changes to the just-ending day (e.g. EffectResolver
+# revenue) can do so before Ledger settles. Listeners that consume the
+# settled day's state (autosave, UI refresh) should continue to use
+# `day_ended`.
+signal day_ending(day: int)
 signal day_ended(day: int)
 signal period_ended(period: int)
 

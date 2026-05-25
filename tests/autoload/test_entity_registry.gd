@@ -256,3 +256,60 @@ func test_instance_current_sprite_key_follows_upgrade_tier() -> void:
 	assert_eq(inst.get_current_sprite_key(), &"base_sprite")
 	EntityRegistry.upgrade(id)
 	assert_eq(inst.get_current_sprite_key(), &"t1_sprite")
+
+
+# --- v0.3.0: maintenance auto-registration -------------------------------
+
+const TEST_MAINT := &"test_maint_def"
+
+
+func _make_maint_def(cost: int) -> void:
+	var def := EntityDef.new()
+	def.id = TEST_MAINT
+	def.display_name = "Maint Test"
+	def.build_cost = 10
+	def.maintenance_cost = cost
+	def.footprint = Vector2i(1, 1)
+	ContentDB.entity_defs[TEST_MAINT] = def
+
+
+func test_place_with_maintenance_registers_per_instance_rule() -> void:
+	_make_maint_def(7)
+	var iid := EntityRegistry.place(TEST_MAINT, Vector2i(0, 0))
+	var rule_id := StringName("maint_%d" % iid)
+	assert_true(Ledger.recurring_rules.has(rule_id))
+	var rule: Dictionary = Ledger.recurring_rules[rule_id]
+	assert_eq(rule["amount"], 7)
+	assert_eq(rule["kind"], Ledger.KIND_EXPENSE)
+	ContentDB.entity_defs.erase(TEST_MAINT)
+
+
+func test_place_with_zero_maintenance_registers_no_rule() -> void:
+	_make_maint_def(0)
+	var iid := EntityRegistry.place(TEST_MAINT, Vector2i(0, 0))
+	var rule_id := StringName("maint_%d" % iid)
+	assert_false(Ledger.recurring_rules.has(rule_id))
+	ContentDB.entity_defs.erase(TEST_MAINT)
+
+
+func test_remove_unregisters_maintenance_rule() -> void:
+	_make_maint_def(5)
+	var iid := EntityRegistry.place(TEST_MAINT, Vector2i(0, 0))
+	var rule_id := StringName("maint_%d" % iid)
+	assert_true(Ledger.recurring_rules.has(rule_id))
+	EntityRegistry.remove(iid)
+	assert_false(Ledger.recurring_rules.has(rule_id))
+	ContentDB.entity_defs.erase(TEST_MAINT)
+
+
+func test_maintenance_deducted_at_day_end() -> void:
+	_make_maint_def(12)
+	var pre := Ledger.get_balance()
+	EntityRegistry.place(TEST_MAINT, Vector2i(0, 0))
+	# place() also posts the build_cost expense.
+	assert_eq(Ledger.get_balance(), pre - 10, "build_cost deducted")
+	# Roll a full day.
+	for i in range(SimClock.ticks_per_day):
+		SimClock.advance_tick()
+	assert_eq(Ledger.get_balance(), pre - 10 - 12, "maintenance recurring deducted on day end")
+	ContentDB.entity_defs.erase(TEST_MAINT)

@@ -22,6 +22,11 @@ var autosave_enabled: bool = true
 # key -> { "save": Callable, "load": Callable }
 var _game_state_handlers: Dictionary = {}
 
+# from_version (int) -> Callable that takes a payload Dict and returns the
+# migrated Dict (one step forward). Walked in ascending order on load when
+# the file's version is below SAVE_VERSION.
+var _migrations: Dictionary = {}
+
 
 func _ready() -> void:
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(SAVE_DIR))
@@ -42,6 +47,39 @@ func register_game_state_provider(key: String, save_fn: Callable, load_fn: Calla
 
 func unregister_game_state_provider(key: String) -> void:
 	_game_state_handlers.erase(key)
+
+
+# Register a one-step migration that upgrades a payload from `from_version`
+# to `from_version + 1`. Migrations chain: loading a v1 payload when
+# SAVE_VERSION is 3 walks 1→2 then 2→3. The Callable receives the payload
+# Dict and must return a Dict for the next version (in-place mutation is
+# fine, return the same dict). Engines should register migrations for any
+# SAVE_VERSION bump that changes the schema; games can register their own
+# for their game_extras payloads.
+func register_migration(from_version: int, migrate_fn: Callable) -> void:
+	_migrations[from_version] = migrate_fn
+
+
+func unregister_migration(from_version: int) -> void:
+	_migrations.erase(from_version)
+
+
+# Returns the upgraded payload or null if no migration path covers the gap.
+func _apply_migrations(payload: Dictionary, from_version: int) -> Variant:
+	var v: int = from_version
+	while v < SAVE_VERSION:
+		if not _migrations.has(v):
+			return null
+		var fn: Callable = _migrations[v]
+		var result: Variant = fn.call(payload)
+		if not (result is Dictionary):
+			push_error("SaveService migration %d→%d returned non-Dict (%s)" %
+				[v, v + 1, typeof(result)])
+			return null
+		payload = result
+		v += 1
+	payload["version"] = SAVE_VERSION
+	return payload
 
 
 # --- Slot operations -----------------------------------------------------
@@ -98,10 +136,19 @@ func load_from_slot(slot: String) -> bool:
 		return false
 	var payload: Dictionary = json.data
 	var version: int = payload.get("version", 0)
-	if version != SAVE_VERSION:
+	if version > SAVE_VERSION:
 		EventBus.load_failed.emit(slot,
-			"save version %d unsupported (expected %d)" % [version, SAVE_VERSION])
+			"save version %d is newer than engine version %d" %
+			[version, SAVE_VERSION])
 		return false
+	if version < SAVE_VERSION:
+		var migrated: Variant = _apply_migrations(payload, version)
+		if migrated == null:
+			EventBus.load_failed.emit(slot,
+				"save version %d cannot be migrated to %d (missing migration step)" %
+				[version, SAVE_VERSION])
+			return false
+		payload = migrated
 
 	# Order matters slightly: restore SimClock first so anything that reads
 	# `current_day` during restore sees the loaded value. AgentPool is reset

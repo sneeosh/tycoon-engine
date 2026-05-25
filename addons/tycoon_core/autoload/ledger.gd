@@ -67,15 +67,48 @@ func post_expense(amount: int, label: String, source_id: StringName = &"") -> vo
 	EventBus.balance_changed.emit(balance)
 
 
-func register_recurring(rule: Dictionary) -> void:
-	assert(rule.has("id") and rule.has("amount") and rule.has("kind"),
-		"recurring rule needs id, amount, kind")
+const VALID_KINDS: Array[StringName] = [KIND_INCOME, KIND_EXPENSE]
+const VALID_PERIODS: Array[StringName] = [PERIOD_DAILY]
+
+
+# Loud-fails on malformed input rather than silently caching a broken rule —
+# a typo here would otherwise drain or inflate balances mysteriously for the
+# rest of the session. Returns false (rule not registered) on bad input.
+func register_recurring(rule: Dictionary) -> bool:
+	if not rule.has("id") or String(rule["id"]).is_empty():
+		push_warning("Ledger.register_recurring: rule needs a non-empty 'id'")
+		return false
+	var id_str := String(rule["id"])
+	if not rule.has("amount"):
+		push_warning("Ledger.register_recurring '%s': missing 'amount'" % id_str)
+		return false
+	var amount: int = int(rule["amount"])
+	if amount < 0:
+		push_warning("Ledger.register_recurring '%s': 'amount' must be >= 0 (got %d)" %
+			[id_str, amount])
+		return false
+	if not rule.has("kind"):
+		push_warning("Ledger.register_recurring '%s': missing 'kind'" % id_str)
+		return false
+	var kind := StringName(rule["kind"])
+	if not (kind in VALID_KINDS):
+		push_warning("Ledger.register_recurring '%s': 'kind' must be one of %s (got '%s')" %
+			[id_str, VALID_KINDS, kind])
+		return false
+	var period := StringName(rule.get("period", PERIOD_DAILY))
+	if not (period in VALID_PERIODS):
+		push_warning("Ledger.register_recurring '%s': 'period' must be one of %s (got '%s')" %
+			[id_str, VALID_PERIODS, period])
+		return false
 	var normalized: Dictionary = rule.duplicate()
-	if not normalized.has("period"):
-		normalized["period"] = PERIOD_DAILY
+	normalized["id"] = StringName(rule["id"])
+	normalized["amount"] = amount
+	normalized["kind"] = kind
+	normalized["period"] = period
 	if not normalized.has("label"):
-		normalized["label"] = String(normalized["id"])
+		normalized["label"] = id_str
 	recurring_rules[normalized["id"]] = normalized
+	return true
 
 
 func unregister_recurring(id: StringName) -> void:

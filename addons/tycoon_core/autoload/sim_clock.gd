@@ -58,6 +58,10 @@ func advance_tick() -> void:
 	EventBus.tick.emit(current_tick)
 	if current_tick % ticks_per_day == 0:
 		current_day += 1
+		# `day_ending` fires first so revenue/expense effects land in the
+		# day they're being earned for; then `day_ended` triggers Ledger
+		# settlement, which rolls today into yesterday.
+		EventBus.day_ending.emit(current_day)
 		EventBus.day_ended.emit(current_day)
 		if current_day % days_per_period == 0:
 			current_period += 1

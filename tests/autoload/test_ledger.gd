@@ -181,3 +181,48 @@ func test_day_settled_signal_emits_with_settled_day_and_totals() -> void:
 	assert_eq(s["income"], 40)
 	assert_eq(s["expense"], 15)
 	EventBus.day_settled.disconnect(capture)
+
+
+# --- v0.3.0: register_recurring validation -------------------------------
+
+func test_register_recurring_returns_true_on_valid_rule() -> void:
+	var ok := Ledger.register_recurring({
+		"id": &"r1", "amount": 10, "kind": Ledger.KIND_EXPENSE,
+	})
+	assert_true(ok)
+	assert_true(Ledger.recurring_rules.has(&"r1"))
+
+
+func test_register_recurring_rejects_missing_id() -> void:
+	var ok := Ledger.register_recurring({"amount": 10, "kind": Ledger.KIND_EXPENSE})
+	assert_false(ok)
+
+
+func test_register_recurring_rejects_empty_id() -> void:
+	var ok := Ledger.register_recurring({
+		"id": "", "amount": 10, "kind": Ledger.KIND_EXPENSE,
+	})
+	assert_false(ok)
+
+
+func test_register_recurring_rejects_negative_amount() -> void:
+	var ok := Ledger.register_recurring({
+		"id": &"r2", "amount": -5, "kind": Ledger.KIND_EXPENSE,
+	})
+	assert_false(ok)
+	assert_false(Ledger.recurring_rules.has(&"r2"))
+
+
+func test_register_recurring_rejects_unknown_kind() -> void:
+	var ok := Ledger.register_recurring({
+		"id": &"r3", "amount": 10, "kind": &"refund",
+	})
+	assert_false(ok)
+
+
+func test_register_recurring_rejects_unknown_period() -> void:
+	var ok := Ledger.register_recurring({
+		"id": &"r4", "amount": 10,
+		"kind": Ledger.KIND_INCOME, "period": &"hourly",
+	})
+	assert_false(ok)

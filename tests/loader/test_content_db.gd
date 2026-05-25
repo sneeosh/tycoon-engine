@@ -255,3 +255,42 @@ func _minimal_economy_md() -> String:
 starting_cash = 1000
 daily_settlement_enabled = true
 """
+
+
+# --- v0.3.0: unlock cycle detection --------------------------------------
+
+func test_cycle_detection_flags_two_node_back_edge() -> void:
+	ContentDB.load_errors.clear()
+	ContentDB.unlock_nodes.clear()
+	var a := UnlockNode.new(); a.id = &"node_a"; a.prerequisites = [&"node_b"] as Array[StringName]
+	var b := UnlockNode.new(); b.id = &"node_b"; b.prerequisites = [&"node_a"] as Array[StringName]
+	ContentDB.unlock_nodes[a.id] = a
+	ContentDB.unlock_nodes[b.id] = b
+	ContentDB._validate_cross_refs()
+	var found_cycle := false
+	for err in ContentDB.load_errors:
+		if "cycle" in err:
+			found_cycle = true
+			break
+	assert_true(found_cycle, "expected a 'cycle' error, got: %s" % str(ContentDB.load_errors))
+	ContentDB.unlock_nodes.clear()
+	ContentDB.load_errors.clear()
+
+
+func test_cycle_detection_accepts_acyclic_chain() -> void:
+	ContentDB.load_errors.clear()
+	ContentDB.unlock_nodes.clear()
+	var root := UnlockNode.new(); root.id = &"root"; root.prerequisites = [] as Array[StringName]
+	var mid := UnlockNode.new(); mid.id = &"mid"; mid.prerequisites = [&"root"] as Array[StringName]
+	var leaf := UnlockNode.new(); leaf.id = &"leaf"; leaf.prerequisites = [&"mid"] as Array[StringName]
+	ContentDB.unlock_nodes[root.id] = root
+	ContentDB.unlock_nodes[mid.id] = mid
+	ContentDB.unlock_nodes[leaf.id] = leaf
+	ContentDB._validate_cross_refs()
+	var cycle_errors: int = 0
+	for err in ContentDB.load_errors:
+		if "cycle" in err:
+			cycle_errors += 1
+	assert_eq(cycle_errors, 0, "expected 0 cycle errors in acyclic graph")
+	ContentDB.unlock_nodes.clear()
+	ContentDB.load_errors.clear()

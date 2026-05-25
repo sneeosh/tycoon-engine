@@ -292,3 +292,31 @@ func test_demo_behavior_seeks_and_refills_need() -> void:
 	assert_eq(a.need_levels[TEST_NEED], 1.0, "demo behavior refilled the need")
 	# Cleanup
 	ContentDB.entity_defs.erase(TEST_DEF)
+
+
+# --- v0.3.0: count_targeting ---------------------------------------------
+
+func test_count_targeting_returns_zero_for_untargeted_entity() -> void:
+	assert_eq(AgentPool.count_targeting(42), 0)
+
+
+func test_count_targeting_reflects_agent_target_entity_id() -> void:
+	# Use whatever the existing test fixture provides — set targets manually
+	# without needing a behavior implementation.
+	var id1 := AgentPool.spawn(TEST_TYPE)
+	var id2 := AgentPool.spawn(TEST_TYPE)
+	var id3 := AgentPool.spawn(TEST_TYPE)
+	AgentPool.get_agent(id1).target_entity_id = 100
+	AgentPool.get_agent(id2).target_entity_id = 100
+	AgentPool.get_agent(id3).target_entity_id = 200
+	assert_eq(AgentPool.count_targeting(100), 2)
+	assert_eq(AgentPool.count_targeting(200), 1)
+	assert_eq(AgentPool.count_targeting(999), 0)
+
+
+func test_count_targeting_excludes_despawned_agents() -> void:
+	var id := AgentPool.spawn(TEST_TYPE)
+	AgentPool.get_agent(id).target_entity_id = 50
+	assert_eq(AgentPool.count_targeting(50), 1)
+	AgentPool.despawn(id)
+	assert_eq(AgentPool.count_targeting(50), 0)

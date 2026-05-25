@@ -250,18 +250,38 @@ func _tick_behavior(agent: Agent) -> void:
 
 
 func _spawn_from_weighted_types() -> void:
-	var types: Array = ContentDB.agent_types.values()
-	if types.is_empty():
+	# Iterate in sorted-id order so two runs with the same seed pick the
+	# same type sequence — Dictionary iteration order is implementation-
+	# defined in Godot and was breaking session-to-session reproducibility.
+	# (Distribution was always weighted-correct; only the ordering differed.)
+	var type_ids: Array = ContentDB.agent_types.keys()
+	if type_ids.is_empty():
 		return
+	type_ids.sort_custom(func(a, b): return String(a) < String(b))
 	var total_weight: float = 0.0
-	for type: AgentType in types:
-		total_weight += type.spawn_weight
+	for id in type_ids:
+		total_weight += (ContentDB.agent_types[id] as AgentType).spawn_weight
 	if total_weight <= 0.0:
 		return
 	var pick := SimClock.rng.randf() * total_weight
 	var accum: float = 0.0
-	for type: AgentType in types:
-		accum += type.spawn_weight
+	for id in type_ids:
+		var t: AgentType = ContentDB.agent_types[id]
+		accum += t.spawn_weight
 		if pick <= accum:
-			spawn(type.id, Vector2.ZERO)
+			spawn(t.id, Vector2.ZERO)
 			return
+
+
+# Returns the number of currently-alive agents whose target_entity_id matches
+# `inst_id`. Behaviors use this to avoid swarming a single popular entity —
+# e.g. pick the second-nearest food stand if the nearest is already crowded.
+# O(alive agents). Cheap at typical scales; if you call this from a hot
+# per-tick loop with thousands of agents, maintain your own reverse index.
+func count_targeting(inst_id: int) -> int:
+	var c: int = 0
+	for id in agents.keys():
+		var a: Agent = agents[id]
+		if a.alive and a.target_entity_id == inst_id:
+			c += 1
+	return c

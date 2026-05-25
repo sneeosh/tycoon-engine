@@ -261,7 +261,10 @@ func test_load_version_mismatch_emits_load_failed() -> void:
 	var ok := SaveService.load_from_slot(SLOT)
 	assert_false(ok)
 	assert_eq(captured.size(), 1)
-	assert_string_contains(captured[0][1], "version 999 unsupported")
+	# v0.3.0 split the version mismatch into "newer than engine" (when the
+	# save claims a future version) vs. migration-failed (older with no
+	# step). 999 > 1, so it's the future-version branch.
+	assert_string_contains(captured[0][1], "newer than engine version")
 	EventBus.load_failed.disconnect(capture)
 
 
@@ -310,3 +313,45 @@ func test_load_clears_alive_agents() -> void:
 
 	ContentDB.needs.erase(need.id)
 	ContentDB.agent_types.erase(type.id)
+
+
+# --- v0.3.0: migration hooks ---------------------------------------------
+
+func test_register_migration_called_for_older_version_payload() -> void:
+	# Synthesize a "version 0" payload and a migration that bumps to 1
+	# (current SAVE_VERSION). Without the migration, load_from_slot would
+	# fail; with it, the payload should load cleanly.
+	var path := "user://saves/test_default.save.json"
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	# A minimal v0 payload — just enough to exercise the migration step.
+	f.store_string(JSON.stringify({
+		"version": 0,
+		"sim_clock": {}, "ledger": {}, "entity_registry": {}, "progression_manager": {},
+	}))
+	f.close()
+	var migration_calls: Array = []
+	var migrate := func(payload: Dictionary) -> Dictionary:
+		migration_calls.append(payload.get("version", -1))
+		payload["migrated_at_version"] = 0
+		return payload
+	SaveService.register_migration(0, migrate)
+	var ok := SaveService.load_from_slot(SLOT)
+	assert_true(ok, "migration path should let v0 load into v1 engine")
+	assert_eq(migration_calls.size(), 1)
+	assert_eq(migration_calls[0], 0)
+	SaveService.unregister_migration(0)
+
+
+func test_load_fails_when_migration_missing_for_older_version() -> void:
+	var path := "user://saves/test_default.save.json"
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	f.store_string(JSON.stringify({"version": 0, "ledger": {}}))
+	f.close()
+	var captured: Array = []
+	var capture := func(slot: String, reason: String) -> void:
+		captured.append([slot, reason])
+	EventBus.load_failed.connect(capture)
+	var ok := SaveService.load_from_slot(SLOT)
+	assert_false(ok)
+	assert_string_contains(captured[0][1], "migrated")
+	EventBus.load_failed.disconnect(capture)
