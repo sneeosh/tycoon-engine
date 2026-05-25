@@ -1,10 +1,10 @@
-# Enclosure / Region / Placeable Pattern — Overview
+# Zone / Region / Placeable Pattern — Overview
 
 Every tycoon eventually wants the same shape: the player builds a region by
-placing modular **enclosure tiles** on the grid, then drops specific
+placing modular **zone tiles** on the grid, then drops specific
 **placeables** inside the region. There is no predefined "Small Pen" or
 "Large Pen" entity — instead, the player decides the shape and size of the
-region by how many enclosure tiles they connect together, and what kind
+region by how many zone tiles they connect together, and what kind
 they pick.
 
 This makes the build flow analogous to placing a golf hole (tee + fairway
@@ -14,7 +14,7 @@ holds beds and equipment).
 
 This document is the overview. Four companion specs detail the math:
 
-- [`region_detection.md`](region_detection.md) — given enclosure tiles on
+- [`region_detection.md`](region_detection.md) — given zone tiles on
   the grid, find connected regions and their cells
 - [`placement_compatibility.md`](placement_compatibility.md) — can this
   placeable go in this region?
@@ -37,16 +37,16 @@ in each game's tuning.
 # Existing fields unchanged: id, display_name, build_cost, footprint,
 # maintenance_cost, sprite_key, satisfies, appeal_profile, effects, …
 
-# Enclosure annotation. Empty means "this entity is not an enclosure tile."
+# Zone annotation. Empty means "this entity is not an zone tile."
 # Any non-empty value flags this EntityDef as a tile that participates in
-# region detection. Two adjacent enclosure tiles with kinds that are
+# region detection. Two adjacent zone tiles with kinds that are
 # considered compatible (see region_detection.md) join the same Region.
-@export var enclosure_kind: StringName = &""
+@export var zone_kind: StringName = &""
 
-# Habitat tags this enclosure tile contributes when it's part of a region.
-# A region's effective provided_habitats is the union across all its
-# constituent enclosure tiles.
-@export var enclosure_habitats: Array[StringName] = []
+# Zone tags this zone tile contributes when it's part of a region.
+# A region's effective provided_zone_tags is the union across all its
+# constituent zone tiles.
+@export var zone_tags: Array[StringName] = []
 ```
 
 Enclosure tiles are placed via the **existing** `EntityRegistry.place(...)`
@@ -71,7 +71,7 @@ class_name PlaceableDef extends Resource
 @export var space_required: int = 1            # cells consumed in the region
 @export var space_ideal: int = 4               # per-individual ideal cells
 
-@export var required_habitats: Array[StringName] = []
+@export var required_zone_tags: Array[StringName] = []
 @export var incompatible_tags: Array[StringName] = []
 @export var own_tags: Array[StringName] = []
 
@@ -103,13 +103,13 @@ var region_id: int = 0
 var kind: StringName = &""                     # primary kind — see region_detection.md
 var member_instance_ids: Array[int] = []       # enclosure EntityInstance ids
 var cells: Array[Vector2i] = []                # every grid cell the region covers
-var provided_habitats: Array[StringName] = []  # union across members
+var provided_zone_tags: Array[StringName] = []  # union across members
 var area: int = 0                              # cells.size() — convenience
 var placements: Array[Placement] = []          # contents
 ```
 
 Regions are not authored content — they're computed by `RegionRegistry`
-(new autoload) from `EntityRegistry`'s enclosure tiles whenever placement
+(new autoload) from `EntityRegistry`'s zone tiles whenever placement
 changes. Region ids are stable within a session; on save/load, the
 detector recomputes them and games re-resolve any region references.
 
@@ -131,17 +131,54 @@ class_name Placement extends Resource
 
 ---
 
+## New extension point: `IPlaceableHappiness`
+
+The engine doesn't decide what makes a placeable "happy" — happiness is
+theme-specific (animals get lonely; golf hazards don't; hospital beds
+have a different model). Same pattern as the existing `IAgentBehavior`
+/ `ISatisfactionModel` extension points.
+
+```gdscript
+class_name IPlaceableHappiness extends RefCounted
+
+# Return a happiness multiplier in [0, 1] for region.placements[index].
+# Default impl returns 1.0 (= "no opinion") so games that don't care
+# about happiness get the simple "sum of contributions" behavior in
+# region_appeal.md automatically.
+func compute_happiness(region: Region, index: int) -> float:
+    return 1.0
+```
+
+Games register at startup:
+
+```gdscript
+# Game-side bootstrap
+EffectResolver.register_happiness_model(MyAnimalHappiness.new())
+```
+
+`region_appeal.md` consults this model when aggregating per-placement
+contributions. The v0.4.0 cut is one global implementation per game;
+per-PlaceableDef registration (different models for different placeable
+kinds) is a future option.
+
+See the Zoo's
+[`animal_happiness.md`](../../../zoo-tycoon/design/algorithms/animal_happiness.md)
+for a worked-out implementation: space penalty, social penalty, missing
+infrastructure (food/water troughs) penalty, attitude multiplier.
+
+---
+
 ## New autoload: `RegionRegistry`
 
 ```gdscript
-# Tracks computed regions, recomputed reactively on enclosure tile changes.
+# Tracks computed regions, recomputed reactively on zone tile changes.
 # Subscribes to EventBus.entity_placed / .entity_removed and runs region
-# detection (see region_detection.md) when an enclosure tile is involved.
+# detection (see region_detection.md) when an zone tile is involved.
 
 # region_id -> Region
 var regions: Dictionary = {}
 
-# instance_id (enclosure tile) -> region_id (membership lookup)
+# instance_id (zone tile) -> region_id (membership lookup)
 var _tile_membership: Dictionary = {}
 
 # --- Queries ----------------------------------------------------------------
@@ -178,7 +215,7 @@ signal placement_removed(region_id: int, index: int)
 ```markdown
 ## Placeables
 
-| id             | display_name   | sprite_key     | build_cost | maintenance_cost | space_required | space_ideal | social_min | social_max | required_habitats | incompatible_tags | own_tags                       | needs_provided_tags        | appeal_contribution     |
+| id             | display_name   | sprite_key     | build_cost | maintenance_cost | space_required | space_ideal | social_min | social_max | required_zone_tags | incompatible_tags | own_tags                       | needs_provided_tags        | appeal_contribution     |
 | -------------- | -------------- | -------------- | ---------- | ---------------- | -------------- | ----------- | ---------- | ---------- | ----------------- | ----------------- | ------------------------------ | -------------------------- | ----------------------- |
 | lion           | Lion           | lion           | 800        | 8                | 3              | 4           | 1          | 3          | grass,rocks       | prey              | predator,big                   | provides_food,provides_water | thrill:0.8,danger:0.6   |
 | zebra          | Zebra          | zebra          | 400        | 4                | 2              | 3           | 3          | 8          | grass             | predator          | prey,herd                      | provides_food,provides_water | beauty:0.4              |
@@ -191,7 +228,7 @@ signal placement_removed(region_id: int, index: int)
 unaffected):
 
 ```markdown
-| id            | display_name    | build_cost | maintenance_cost | footprint_x | footprint_y | sprite_key    | enclosure_kind | enclosure_habitats |
+| id            | display_name    | build_cost | maintenance_cost | footprint_x | footprint_y | sprite_key    | zone_kind | zone_tags |
 | ------------- | --------------- | ---------- | ---------------- | ----------- | ----------- | ------------- | -------------- | ------------------ |
 | grass_pen     | Grass Enclosure | 80         | 1                | 1           | 1           | grass_pen     | pen            | grass              |
 | rocky_pen     | Rocky Enclosure | 120        | 1                | 1           | 1           | rocky_pen     | pen            | grass,rocks        |
@@ -199,12 +236,12 @@ unaffected):
 | aviary_pen    | Aviary Cage     | 220        | 2                | 1           | 1           | aviary_pen    | aviary         | tall_cage,grass    |
 ```
 
-Two adjacent tiles join the same region if they share `enclosure_kind`
+Two adjacent tiles join the same region if they share `zone_kind`
 (simple rule) — see [`region_detection.md`](region_detection.md) for the
 full join rule and the option for kind-compatibility tables.
 
-ContentDB cross-ref validation: every `required_habitats` tag on a
-`PlaceableDef` must appear in at least one `EntityDef.enclosure_habitats`
+ContentDB cross-ref validation: every `required_zone_tags` tag on a
+`PlaceableDef` must appear in at least one `EntityDef.zone_tags`
 list; else loud error.
 
 ---
@@ -214,7 +251,7 @@ list; else loud error.
 ```
 1. Player opens build menu → picks "Grass Enclosure" → places at (5, 5).
    Engine: EntityRegistry.place(&"grass_pen", (5,5)) — same path as today.
-   RegionRegistry sees a new enclosure tile → runs region detection →
+   RegionRegistry sees a new zone tile → runs region detection →
    creates Region #7 with cells=[(5,5)], area=1, habitats=[grass].
    region_created(7) fires.
 
@@ -230,7 +267,7 @@ list; else loud error.
    panel. Pulls region from RegionRegistry.region_at_cell((5,5)).
 
 5. Player clicks "Add Animal" → picker shows every PlaceableDef whose
-   required_habitats ⊆ region.provided_habitats. Greys out placeables
+   required_zone_tags ⊆ region.provided_zone_tags. Greys out placeables
    that fail can_add_placement.
 
 6. Player picks "Lion" → RegionRegistry.add_placement(7, &"lion").
@@ -243,12 +280,12 @@ list; else loud error.
 
 8. Player places a "Rocky Enclosure" adjacent to Region #7.
    Adjacency + same kind (both "pen") → joined. Region #7 now has area=10
-   and provided_habitats=[grass, rocks].
+   and provided_zone_tags=[grass, rocks].
    region_changed(7) fires; cached appeals invalidate.
 
 9. Player removes one of the original grass tiles in the middle, splitting
    the connected component in two. Region detection:
-   - If the split makes Region #7 invalid (animal's required_habitats no
+   - If the split makes Region #7 invalid (animal's required_zone_tags no
      longer satisfied), the placement is "stranded" — see below.
    - Otherwise: Region #7 shrinks to one connected component, a new
      Region #N is created for the other. Engine emits region_changed(7)
@@ -260,9 +297,9 @@ list; else loud error.
 
 ## Stranded placements
 
-When an enclosure tile is removed and the placement's region either:
+When an zone tile is removed and the placement's region either:
 - shrinks below `placement.space_required`, OR
-- loses one of `placement.required_habitats`,
+- loses one of `placement.required_zone_tags`,
 
 the placement is **stranded** — still in the region, but no longer happily
 contained. The engine emits a `placement_stranded(region_id, placement_index)`
@@ -291,7 +328,7 @@ mark stranded, never auto-remove (player keeps full control).
 
 Land everything in one release (per review feedback):
 
-1. `EntityDef.enclosure_kind` + `enclosure_habitats` parsing in ContentDB
+1. `EntityDef.zone_kind` + `zone_tags` parsing in ContentDB
 2. `PlaceableDef` Resource + `placeables.md` parsing
 3. `RegionRegistry` autoload with full region-detection logic
 4. Placement add/remove with compatibility checks (with happiness math)
@@ -300,11 +337,11 @@ Land everything in one release (per review feedback):
 7. Tests for all four algorithm specs
 
 The zoo demo on top of this:
-- Replace the five hardcoded exhibit EntityDefs with enclosure tiles
+- Replace the five hardcoded exhibit EntityDefs with zone tiles
   (grass_pen, rocky_pen, water_pen, aviary_pen) + a set of animal
   PlaceableDefs (lion, zebra, elephant, parrot, penguin)
 - New build menu groups: "Enclosures" / "Animals" / "Amenities"
 - Region selection UI: click any cell in a region → opens management panel
 - Repurpose existing sprites: the lion_exhibit.png becomes the lion
-  placeable sprite (just the animal); enclosure tiles get new 1-cell
+  placeable sprite (just the animal); zone tiles get new 1-cell
   sprites (grass patch, rock patch, water patch, cage panel)

@@ -1,40 +1,40 @@
-# Region Detection — Connected components of enclosure tiles
+# Region Detection — Connected components of zone tiles
 
 A `Region` is an emergent gameplay unit (zoo exhibit, golf hole, hospital
-ward) derived from a connected set of enclosure-kind tiles on the grid.
+ward) derived from a connected set of zone-kind tiles on the grid.
 When the player places or removes a tile with a non-empty
-`EntityDef.enclosure_kind`, `RegionRegistry` recomputes which regions
+`EntityDef.zone_kind`, `RegionRegistry` recomputes which regions
 exist and which tiles belong to which.
 
 This spec defines that detection.
 
-See [`enclosure_pattern.md`](enclosure_pattern.md) for the data model.
+See [`zone_pattern.md`](zone_pattern.md) for the data model.
 
 ## Intent
 
-Reactively maintain a partition of all currently-placed enclosure tiles
+Reactively maintain a partition of all currently-placed zone tiles
 into regions, where two tiles share a region iff they're connected
-through a path of edge-adjacent same-kind enclosure tiles. Recomputation
+through a path of edge-adjacent same-kind zone tiles. Recomputation
 runs on add and on remove. Add is cheap (the new tile joins at most one
 region, or merges several); remove can split a region into multiple
 connected components and is the harder case.
 
 ## Definitions
 
-- **Tile** — an `EntityInstance` whose `EntityDef.enclosure_kind` is non-empty.
+- **Tile** — an `EntityInstance` whose `EntityDef.zone_kind` is non-empty.
 - **Adjacent** — two cells `a`, `b` such that `b - a ∈ {(0,-1),(0,1),(-1,0),(1,0)}`.
   4-neighborhood by design — diagonal connections create visually
   ambiguous regions ("are those two grass tiles in the same exhibit if
   they only touch at a corner?") and are surprising to players.
 - **Same-kind adjacent tiles** — two adjacent tiles `a`, `b` whose
-  `EntityDef.enclosure_kind` are equal.
+  `EntityDef.zone_kind` are equal.
 
 A **region** is a maximal set of tiles, every pair of which is connected
 by a path of same-kind adjacent tiles.
 
 ## Inputs
 
-- Whole set of currently-placed enclosure tiles (from `EntityRegistry`)
+- Whole set of currently-placed zone tiles (from `EntityRegistry`)
 - The tile that was just added or removed (the event trigger)
 
 ## Output
@@ -59,10 +59,10 @@ function on_tile_placed(t):
         # New isolated region.
         r = Region.new()
         r.region_id = _next_region_id++
-        r.kind = t.get_def().enclosure_kind
+        r.kind = t.get_def().zone_kind
         r.member_instance_ids = [t.instance_id]
         r.cells = cells_of(t)
-        r.provided_habitats = list(t.get_def().enclosure_habitats)
+        r.provided_zone_tags = list(t.get_def().zone_tags)
         r.area = r.cells.size()
         regions[r.region_id] = r
         _tile_membership[t.instance_id] = r.region_id
@@ -75,8 +75,8 @@ function on_tile_placed(t):
         r = regions[rid]
         r.member_instance_ids.append(t.instance_id)
         r.cells += cells_of(t)
-        r.provided_habitats = union(r.provided_habitats,
-                                    t.get_def().enclosure_habitats)
+        r.provided_zone_tags = union(r.provided_zone_tags,
+                                    t.get_def().zone_tags)
         r.area = r.cells.size()
         _tile_membership[t.instance_id] = rid
         emit region_changed(rid)
@@ -89,8 +89,8 @@ function on_tile_placed(t):
         other = regions[other_id]
         primary.member_instance_ids += other.member_instance_ids
         primary.cells += other.cells
-        primary.provided_habitats = union(primary.provided_habitats,
-                                          other.provided_habitats)
+        primary.provided_zone_tags = union(primary.provided_zone_tags,
+                                          other.provided_zone_tags)
         primary.placements += other.placements   # contents migrate
         for tid in other.member_instance_ids:
             _tile_membership[tid] = primary_id
@@ -108,7 +108,7 @@ function on_tile_placed(t):
 ```
 function on_tile_removed(t):
     if not _tile_membership.has(t.instance_id):
-        return  # wasn't an enclosure tile
+        return  # wasn't an zone tile
 
     rid = _tile_membership[t.instance_id]
     r = regions[rid]
@@ -128,7 +128,7 @@ function on_tile_removed(t):
 
     if len(components) == 1:
         r.cells = recompute_cells(components[0])
-        r.provided_habitats = recompute_habitats(components[0])
+        r.provided_zone_tags = recompute_habitats(components[0])
         r.area = r.cells.size()
         _check_strandings(r)
         emit region_changed(rid)
@@ -140,7 +140,7 @@ function on_tile_removed(t):
     kept = components[0]
     r.member_instance_ids = kept
     r.cells = recompute_cells(kept)
-    r.provided_habitats = recompute_habitats(kept)
+    r.provided_zone_tags = recompute_habitats(kept)
     r.area = r.cells.size()
 
     # Reassign placements based on which split component they belong to.
@@ -154,7 +154,7 @@ function on_tile_removed(t):
         new_r.kind = r.kind
         new_r.member_instance_ids = other_component
         new_r.cells = recompute_cells(other_component)
-        new_r.provided_habitats = recompute_habitats(other_component)
+        new_r.provided_zone_tags = recompute_habitats(other_component)
         new_r.area = new_r.cells.size()
         for tid in other_component:
             _tile_membership[tid] = new_r.region_id
@@ -176,15 +176,15 @@ typical zoo scale (~hundreds of tiles), single-millisecond cost; engine
 will refuse to optimize until proven necessary.
 
 `_check_strandings(r)` walks `r.placements` and emits `placement_stranded`
-for any whose `space_required` exceeds `r.area` or whose `required_habitats`
-aren't all present in `r.provided_habitats`.
+for any whose `space_required` exceeds `r.area` or whose `required_zone_tags`
+aren't all present in `r.provided_zone_tags`.
 
 ## Worked Examples
 
 A 4×4 grid. Cells written as `(x,y)`. Tiles named after their type:
-- `G` = grass_pen, enclosure_kind `pen`, habitats [grass]
-- `R` = rocky_pen, enclosure_kind `pen`, habitats [grass, rocks]
-- `A` = aviary_pen, enclosure_kind `aviary`, habitats [tall_cage, grass]
+- `G` = grass_pen, zone_kind `pen`, habitats [grass]
+- `R` = rocky_pen, zone_kind `pen`, habitats [grass, rocks]
+- `A` = aviary_pen, zone_kind `aviary`, habitats [tall_cage, grass]
 
 | # | initial state                                                          | event                          | expected outcome                                                                 |
 |---|------------------------------------------------------------------------|--------------------------------|----------------------------------------------------------------------------------|
@@ -206,7 +206,7 @@ is a build failure.
 
 ## Performance notes
 
-For a zoo with a few hundred enclosure tiles and a handful of regions,
+For a zoo with a few hundred zone tiles and a handful of regions,
 even the full O(N+E) flood fill is sub-millisecond. The engine ships the
 naive incremental algorithm and revisits only if profile data shows it
 matters. Optimizations available if needed:
@@ -228,11 +228,11 @@ Defer all of these until needed.
   one-kind-per-region rule.
 - **Diagonal adjacency** — 4-neighborhood only.
 - **Tile orientation** — fence/wall pieces that have a "front" side
-  don't exist yet; an enclosure tile is fully isotropic.
+  don't exist yet; an zone tile is fully isotropic.
 - **Gates / openings** — there's no concept of a "visitor entry point"
   on a region yet. Visitors interact with regions as black boxes (a region
   has appeal; visitors near it gain satisfaction). When pathing-aware
   visitors land, a Gate placement (special placeable kind?) will mark the
   cell visitors enter through.
-- **Multi-cell enclosure tiles** — supported by the algorithm (cells of a
+- **Multi-cell zone tiles** — supported by the algorithm (cells of a
   tile = `footprint × position`), but not exercised in worked examples.

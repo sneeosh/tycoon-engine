@@ -4,13 +4,13 @@ Run before every `RegionRegistry.add_placement(...)` and again every time
 the build-menu picker filters available placeables. Returns a structured
 result so UIs can grey out invalid options with a tooltip explaining why.
 
-See [`enclosure_pattern.md`](enclosure_pattern.md) for the data model and
+See [`zone_pattern.md`](zone_pattern.md) for the data model and
 [`region_detection.md`](region_detection.md) for how regions are derived.
 
 ## Intent
 
 Reject placements that would put the region in an obviously broken state:
-over space budget, missing a required habitat, or mixing incompatible
+over space budget, missing a required zone tag, or mixing incompatible
 species. All other gameplay-quality concerns ("the placement is *valid*
 but the placeable will be unhappy") are scored by
 [`placeable_happiness.md`](placeable_happiness.md) and don't block
@@ -42,7 +42,7 @@ A `Dictionary` with this shape:
 Stable reason prefixes so UIs can switch on them:
 
 - `"over space"` (followed by `: need N, have M`)
-- `"missing habitat: <tag>"`
+- `"missing zone tag: <tag>"`
 - `"incompatible with <existing.display_name>"`
 
 ## Pseudocode
@@ -57,10 +57,10 @@ function can_place(region, candidate_def):
         return {ok: false, reason: "over space: need %d, have %d" %
                 [candidate_def.space_required, space_free]}
 
-    # 2. Habitat
-    for tag in candidate_def.required_habitats:
-        if tag not in region.provided_habitats:
-            return {ok: false, reason: "missing habitat: %s" % tag}
+    # 2. Zone tags
+    for tag in candidate_def.required_zone_tags:
+        if tag not in region.provided_zone_tags:
+            return {ok: false, reason: "missing zone tag: %s" % tag}
 
     # 3. Incompatibility — symmetric. Either side declaring the other's
     #    tags as a deal-breaker blocks placement.
@@ -86,7 +86,7 @@ Placeables:
   penguin: space_req 1, habitats [water, grass], own [bird, social],    incompat []
 ```
 
-Regions built up from enclosure tiles (see `region_detection.md`):
+Regions built up from zone tiles (see `region_detection.md`):
 
 ```
 R1 (kind=pen,    area=4, habitats=[grass]):         four grass_pen tiles
@@ -101,8 +101,8 @@ R4 (kind=pen,    area=12, habitats=[grass, water]): eight grass_pen + four water
 | 2 | R1     | [lion]                       | lion      | false       | "over space: need 3, have 1"   |
 | 3 | R1     | [lion]                       | zebra     | false       | "incompatible with Lion"       |
 | 4 | R1     | [zebra]                      | lion      | false       | "incompatible with Zebra"      |
-| 5 | R1     | []                           | parrot    | false       | "missing habitat: tall_cage"   |
-| 6 | R1     | []                           | penguin   | false       | "missing habitat: water"       |
+| 5 | R1     | []                           | parrot    | false       | "missing zone tag: tall_cage"   |
+| 6 | R1     | []                           | penguin   | false       | "missing zone tag: water"       |
 | 7 | R2     | [lion]                       | lion      | true        | (9 area, 6 used after)         |
 | 8 | R2     | [lion, lion]                 | lion      | true        | (9 area, 9 used after)         |
 | 9 | R2     | [lion, lion, lion]           | lion      | false       | "over space: need 3, have 0"   |

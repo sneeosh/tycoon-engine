@@ -10,10 +10,15 @@ each placeable's happiness.
 
 This spec defines that aggregation.
 
-See [`enclosure_pattern.md`](enclosure_pattern.md) for the data model,
-[`region_detection.md`](region_detection.md) for how regions are derived,
-and [`placeable_happiness.md`](placeable_happiness.md) for the happiness
-multiplier this depends on.
+See [`zone_pattern.md`](zone_pattern.md) for the data model and
+[`region_detection.md`](region_detection.md) for how regions are derived.
+The happiness multiplier used here comes from the registered
+`IPlaceableHappiness` implementation (see `zone_pattern.md`); the engine
+itself doesn't define what makes a placeable happy — golf hazards aren't
+sentient, hospital beds don't get lonely. Games supply their own model.
+The default engine implementation returns `1.0` for every placement, so
+games that don't care about happiness get the simple "sum of contributions"
+behavior automatically.
 
 ## Intent
 
@@ -68,7 +73,9 @@ function compute_region_appeal(region):
 
     for i, placement in enumerate(region.placements):
         p_def = ContentDB.placeable_defs[placement.placeable_def_id]
-        happiness = placeable_happiness(region, i)
+        # Default impl returns 1.0; games override via
+        # EffectResolver.register_happiness_model(impl).
+        happiness = _happiness_model.compute_happiness(region, i)
         for axis, raw_contrib in p_def.appeal_contribution.items():
             effective = clamp(raw_contrib * happiness, 0.0, 1.0)
             current = remaining.get(axis, 1.0)
