@@ -181,24 +181,32 @@ aren't all present in `r.provided_zone_tags`.
 
 ## Worked Examples
 
-A 4×4 grid. Cells written as `(x,y)`. Tiles named after their type:
-- `G` = grass_pen, zone_kind `pen`, habitats [grass]
-- `R` = rocky_pen, zone_kind `pen`, habitats [grass, rocks]
-- `A` = aviary_pen, zone_kind `aviary`, habitats [tall_cage, grass]
+Engine examples use abstract zone-tile types; theme-flavored walkthroughs
+live in each game's repo.
+
+A 4×4 grid. Cells written as `(x,y)`. Zone tile types:
+- `α` = zone_kind `alpha`, zone_tags `[t1]`
+- `α'` = zone_kind `alpha`, zone_tags `[t1, t2]` (a variant — same kind, extra tag)
+- `β` = zone_kind `beta`,  zone_tags `[t3, t1]`
+
+Placeable fixtures used in rows 9–11:
+- `Q` = `space_required=1`, `required_zone_tags=[t1]`
+- `Q3` = `space_required=3`, `required_zone_tags=[t1]`
+- `Q2` = `space_required=1`, `required_zone_tags=[t2]` (needs the α' variant)
 
 | # | initial state                                                          | event                          | expected outcome                                                                 |
 |---|------------------------------------------------------------------------|--------------------------------|----------------------------------------------------------------------------------|
-| 1 | empty                                                                  | place G at (1,1)               | Region #1: kind `pen`, area 1, habitats [grass], cells [(1,1)]                   |
-| 2 | Region #1 with G at (1,1)                                              | place G at (1,2)               | Region #1 extends: area 2, cells [(1,1),(1,2)]                                   |
-| 3 | Region #1: G at (1,1),(1,2)                                            | place G at (3,3)               | Region #2 created at (3,3); #1 unchanged                                         |
-| 4 | Region #1: G at (1,1),(1,2); Region #2: G at (3,3)                     | place G at (2,3)               | Region #2 extends to [(3,3),(2,3)]; still no #1 ↔ #2 merge                       |
-| 5 | Region #1: G at (1,1),(1,2); Region #2: G at (2,3),(3,3)               | place G at (1,3)               | Merge: #1 absorbs #2 → area 5, cells [(1,1),(1,2),(1,3),(2,3),(3,3)]; #2 destroyed |
-| 6 | Region #1: G at (1,1),(1,2)                                            | place R at (1,3)               | Same kind `pen` → #1 extends to area 3, habitats [grass, rocks]                  |
-| 7 | Region #1: G at (1,1),(1,2)                                            | place A at (1,3)               | Different kind `aviary` → new Region #2: kind `aviary`, area 1; #1 unchanged     |
-| 8 | Region #1: G at (1,1),(1,2),(1,3),(1,4) (vertical line)                | remove G at (1,2)              | Split: #1 keeps (1,1) (the largest), #3 created for (1,3),(1,4) (the larger component wins; tie → kept) |
-| 9 | Region #1: G at (1,1),(1,2),(1,3),(1,4); placement Lion at (1,3)       | remove G at (1,2)              | Split as in #8; Lion's primary_cell=(1,3) → migrates to new region #3            |
-| 10| Region #1: G at (1,1) only; placement Parrot at (1,1) needs `tall_cage`| remove G at (1,1)              | region_destroyed(#1); placement_stranded fires before destroy                    |
-| 11| Region #1: G at (1,1),(1,2),(1,3); placement Lion (space_required=3)   | remove G at (1,2)              | Split: components [(1,1)] and [(1,3)] — both area 1. Lion's space_required 3 > area 1 → placement_stranded emitted, Lion stays in its primary cell's new region |
+| 1 | empty                                                                  | place α at (1,1)               | Region #1: kind `alpha`, area 1, zone_tags [t1], cells [(1,1)]                   |
+| 2 | Region #1 with α at (1,1)                                              | place α at (1,2)               | Region #1 extends: area 2, cells [(1,1),(1,2)]                                   |
+| 3 | Region #1: α at (1,1),(1,2)                                            | place α at (3,3)               | Region #2 created at (3,3); #1 unchanged                                         |
+| 4 | Region #1: α at (1,1),(1,2); Region #2: α at (3,3)                     | place α at (2,3)               | Region #2 extends to [(3,3),(2,3)]; still no #1 ↔ #2 merge                       |
+| 5 | Region #1: α at (1,1),(1,2); Region #2: α at (2,3),(3,3)               | place α at (1,3)               | Merge: #1 absorbs #2 → area 5, cells [(1,1),(1,2),(1,3),(2,3),(3,3)]; #2 destroyed |
+| 6 | Region #1: α at (1,1),(1,2)                                            | place α' at (1,3)              | Same kind `alpha` → #1 extends to area 3, zone_tags [t1, t2]                     |
+| 7 | Region #1: α at (1,1),(1,2)                                            | place β at (1,3)               | Different kind `beta` → new Region #2: kind `beta`, area 1; #1 unchanged         |
+| 8 | Region #1: α at (1,1),(1,2),(1,3),(1,4) (vertical line)                | remove α at (1,2)              | Split: #1 keeps (1,3),(1,4) (the larger; tie-breaker: lowest cell index), #3 created for (1,1) |
+| 9 | Region #1: α at (1,1),(1,2),(1,3),(1,4); placement `Q` at (1,3)        | remove α at (1,2)              | Split as in #8; `Q`'s primary_cell=(1,3) stays in #1 (the kept component)        |
+| 10| Region #1: α' at (1,1) only; placement `Q2` at (1,1) (needs t2)        | remove α' at (1,1)             | region_destroyed(#1); placement_stranded fires before destroy                    |
+| 11| Region #1: α at (1,1),(1,2),(1,3); placement `Q3` (space_required=3)   | remove α at (1,2)              | Split: components [(1,1)] and [(1,3)] — both area 1. `Q3`'s space_required 3 > area 1 → placement_stranded emitted, `Q3` stays in its primary cell's component |
 
 Each row above mirrors one-to-one as a GUT test in
 `tests/systems/test_region_detection.gd`. Drift between table and code
@@ -206,10 +214,10 @@ is a build failure.
 
 ## Performance notes
 
-For a zoo with a few hundred zone tiles and a handful of regions,
-even the full O(N+E) flood fill is sub-millisecond. The engine ships the
-naive incremental algorithm and revisits only if profile data shows it
-matters. Optimizations available if needed:
+For a game with a few hundred zone tiles and a handful of regions, even
+the full O(N+E) flood fill is sub-millisecond. The engine ships the naive
+incremental algorithm and revisits only if profile data shows it matters.
+Optimizations available if needed:
 
 - **Union-Find with path compression** for the add path — O(α(N))
   amortized.

@@ -24,12 +24,13 @@ behavior automatically.
 
 A region's appeal should:
 
-1. **Reflect the best of what's inside.** A region with a single lion
-   still has lion-grade thrill.
-2. **Reward variety with diminishing returns.** Two lions are slightly
-   more appealing than one; ten lions aren't ten times more appealing.
-3. **Penalize unhappy contents.** A lion at 0.5 happiness contributes
-   half what a happy lion would. (This is the only place happiness enters
+1. **Reflect the best of what's inside.** A region with a single
+   placeable still has that placeable's full appeal on the axes it
+   contributes to.
+2. **Reward variety with diminishing returns.** Two identical placeables
+   are more appealing than one; ten aren't ten times more appealing.
+3. **Penalize unhappy contents.** A placeable at 0.5 happiness contributes
+   half what a happy one would. (This is the only place happiness enters
    appeal — placement compatibility is unaffected.)
 4. **Stay bounded in `[0, 1]`** so the existing `appeal_match` formula
    keeps its semantics.
@@ -90,45 +91,42 @@ function compute_region_appeal(region):
 
 ## Worked Examples
 
-Tuning shared across specs:
+Engine examples use abstract placeholders. Happiness values are stipulated
+per row (a real test would invoke the registered `IPlaceableHappiness`
+implementation; for unit-testing the aggregation math we feed in
+constants).
 
 ```
 Placeables (appeal_contribution shown):
-  lion:    {thrill: 0.8, danger: 0.6}
-  tiger:   {thrill: 0.7, danger: 0.7, exotic: 0.4}   (social [1, 2])
-  zebra:   {beauty: 0.4}
-  parrot:  {beauty: 0.5, exotic: 0.7}
-  penguin: {beauty: 0.6, cute:   0.8}
-
-Happiness rows referenced from placeable_happiness.md.
+  P_A: {axis1: 0.8, axis2: 0.6}
+  P_B: {axis1: 0.7, axis2: 0.7, axis3: 0.4}
+  P_C: {axis2: 0.4}
+  P_D: {axis2: 0.5, axis3: 0.7}
+  P_E: {axis2: 0.6, axis4: 0.8}
 ```
 
-Regions:
-- R_small: area=4 (grass)
-- R_med:   area=9 (grass + rocks)
-- R_big:   area=16 (grass + rocks)
-- R_aviary:area=9 (tall_cage + grass)
-- R_aqua:  area=12 (water + grass)
+Regions (built up from zone tiles per `region_detection.md`):
+- R_4:  area 4
+- R_9:  area 9
+- R_16: area 16
 
-| # | region   | placements                     | happiness per placement       | appeal_profile (out)                                                  |
-|---|----------|--------------------------------|-------------------------------|-----------------------------------------------------------------------|
-| 1 | R_small  | []                             | —                             | {} (empty)                                                            |
-| 2 | R_small  | [lion]                         | [0.90] (happiness row 1)      | {thrill: 1-(1-0.72) = 0.72, danger: 1-(1-0.54) = 0.54}                |
-| 3 | R_med    | [lion, lion]                   | [1.00, 1.00] (happiness row 2)| {thrill: 1-(0.2)(0.2) = 0.96, danger: 1-(0.4)(0.4) = 0.84}            |
-| 4 | R_big    | [lion]×4                       | [1.00]×4 (happiness row 3)    | {thrill: 1-(0.2)^4 = 0.9984, danger: 1-(0.4)^4 = 0.9744}              |
-| 5 | R_big    | [lion]×5                       | [0.85]×5 (happiness row 4)    | effective thrill = 0.8×0.85 = 0.68; 1-(0.32)^5 ≈ 0.9966. eff danger = 0.51; 1-(0.49)^5 ≈ 0.9718 |
-| 6 | R_med    | [lion, tiger]                  | [0.90, 0.90] (happiness row 12 + symmetric for tiger) | thrill: lion eff 0.72, tiger eff 0.63; 1-(1-0.72)(1-0.63) = 0.8964. danger: lion 0.54, tiger 0.63; 1-(0.46)(0.37) = 0.8298. exotic: tiger only 0.36; 1-(1-0.36) = 0.36 |
-| 7 | R_aviary | [parrot]×5                     | [1.00]×5 (happiness row 7)    | beauty: 1-(0.5)^5 ≈ 0.969; exotic: 1-(0.3)^5 ≈ 0.998                  |
-| 8 | R_aviary | [parrot]                       | [0.80] (happiness row 5)      | effective beauty = 0.40, exotic = 0.56; appeal: {beauty: 0.40, exotic: 0.56} |
-| 9 | R_aqua   | [penguin]×4                    | [0.90]×4 (happiness row 11)   | beauty eff = 0.54, cute eff = 0.72; beauty: 1-(0.46)^4 ≈ 0.955; cute: 1-(0.28)^4 ≈ 0.994 |
-| 10| R_small  | [zebra]                        | [0.70] (happiness: solo zebra, social_min 3 → 1-(3-0)*0.1 = 0.70) | beauty eff = 0.28; {beauty: 0.28} |
+| # | region | placements         | stipulated happiness          | appeal_profile (out)                                                              |
+|---|--------|--------------------|-------------------------------|-----------------------------------------------------------------------------------|
+| 1 | R_4    | []                 | —                             | `{}` (empty)                                                                      |
+| 2 | R_4    | [P_A]              | [0.90]                        | axis1: 1-(1-0.72)=0.72; axis2: 1-(1-0.54)=0.54                                    |
+| 3 | R_9    | [P_A, P_A]         | [1.00, 1.00]                  | axis1: 1-(0.2)(0.2)=0.96; axis2: 1-(0.4)(0.4)=0.84                                |
+| 4 | R_16   | [P_A]×4            | [1.00]×4                      | axis1: 1-(0.2)^4=0.9984; axis2: 1-(0.4)^4=0.9744                                  |
+| 5 | R_16   | [P_A]×5            | [0.85]×5                      | eff axis1=0.68; 1-(0.32)^5≈0.9966. eff axis2=0.51; 1-(0.49)^5≈0.9718              |
+| 6 | R_9    | [P_A, P_B]         | [0.90, 0.90]                  | axis1: P_A eff 0.72, P_B eff 0.63 → 1-(0.28)(0.37)=0.8964. axis2: 0.54, 0.63 → 1-(0.46)(0.37)=0.8298. axis3: P_B only 0.36 → 0.36 |
+| 7 | R_9    | [P_D]×5            | [1.00]×5                      | axis2: 1-(0.5)^5≈0.969; axis3: 1-(0.3)^5≈0.998                                    |
+| 8 | R_9    | [P_D]              | [0.80]                        | eff axis2=0.40, axis3=0.56 → `{axis2: 0.40, axis3: 0.56}`                         |
+| 9 | R_16   | [P_E]×4            | [0.90]×4                      | eff axis2=0.54, axis4=0.72; axis2: 1-(0.46)^4≈0.955; axis4: 1-(0.28)^4≈0.994      |
+| 10| R_4    | [P_C]              | [0.70]                        | eff axis2=0.28; `{axis2: 0.28}`                                                   |
 
-Reading row 6 in plain English: a lone lion and a lone tiger share a
-9-cell region. Neither has a same-species companion → both score 0.9
-happiness (`-1×0.1` social penalty). Each contributes a reduced share to
-its appeal axes. The aggregation closes the gap to 1 by saturation — two
-contributors yields ~0.9 thrill, ~0.83 danger, plus the tiger's solo
-0.36 exotic.
+Row 6 in plain English: P_A and P_B each scored 0.90 happiness. Each
+contributes a reduced share to its appeal axes. The aggregation closes
+the gap to 1 by saturation — two contributors yield ~0.9 on axis1,
+~0.83 on axis2, plus P_B's solo 0.36 on axis3.
 
 Each row above mirrors one-to-one as a GUT test in
 `tests/systems/test_region_appeal.gd`. Drift between table and code

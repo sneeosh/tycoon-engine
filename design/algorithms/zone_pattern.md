@@ -87,12 +87,15 @@ class_name PlaceableDef extends Resource
 ```
 
 This lets the game express things like:
-- A `lion` needs `provides_food` + `provides_water` in its region.
-- A `feeding_trough` placeable provides `[provides_food, infrastructure]`
-  via `own_tags`.
-- A region with a lion but no trough → lion's happiness penalised; that
-  penalty flows through into the region's appeal score → visitors see a
-  worse exhibit.
+- A "high-needs" placeable requires support tags like `provides_food` /
+  `provides_water` in its region.
+- An "infrastructure" placeable advertises those tags via `own_tags` and
+  has no needs of its own.
+- A region with high-needs contents but no infrastructure → happiness
+  penalised by the game's `IPlaceableHappiness` implementation → that
+  penalty flows through into the region's appeal score → visitors see
+  a worse exhibit. (Engine doesn't define the penalty; games do — see
+  e.g. zoo's `animal_happiness.md`.)
 
 ### `Region` (new runtime concept — not a Resource, derived state)
 
@@ -209,31 +212,36 @@ signal placement_removed(region_id: int, index: int)
 
 ## ContentDB additions
 
-`design/tuning/placeables.md` is the new tuning file (parser pattern same as
-`agents.md`):
+`design/tuning/placeables.md` is the new tuning file (parser pattern same
+as `agents.md`). The columns below are engine-defined; each game fills
+them with its own theme.
 
 ```markdown
 ## Placeables
 
-| id             | display_name   | sprite_key     | build_cost | maintenance_cost | space_required | space_ideal | social_min | social_max | required_zone_tags | incompatible_tags | own_tags                       | needs_provided_tags        | appeal_contribution     |
-| -------------- | -------------- | -------------- | ---------- | ---------------- | -------------- | ----------- | ---------- | ---------- | ----------------- | ----------------- | ------------------------------ | -------------------------- | ----------------------- |
-| lion           | Lion           | lion           | 800        | 8                | 3              | 4           | 1          | 3          | grass,rocks       | prey              | predator,big                   | provides_food,provides_water | thrill:0.8,danger:0.6   |
-| zebra          | Zebra          | zebra          | 400        | 4                | 2              | 3           | 3          | 8          | grass             | predator          | prey,herd                      | provides_food,provides_water | beauty:0.4              |
-| parrot         | Parrot         | parrot         | 200        | 1                | 1              | 1           | 2          | 8          | tall_cage         |                   | bird,colorful                  | provides_food              | beauty:0.5,exotic:0.7   |
-| feeding_trough | Feeding Trough | feeding_trough | 80         | 2                | 1              | 1           | 0          | 99         |                   |                   | provides_food,infrastructure   |                            |                         |
-| water_trough   | Water Trough   | water_trough   | 60         | 1                | 1              | 1           | 0          | 99         |                   |                   | provides_water,infrastructure  |                            |                         |
+| id      | display_name | sprite_key | build_cost | maintenance_cost | space_required | space_ideal | social_min | social_max | required_zone_tags | incompatible_tags | own_tags         | needs_provided_tags | appeal_contribution    |
+| ------- | ------------ | ---------- | ---------- | ---------------- | -------------- | ----------- | ---------- | ---------- | ------------------ | ----------------- | ---------------- | ------------------- | ---------------------- |
+| p_alpha | Alpha        | p_alpha    | 800        | 8                | 3              | 4           | 1          | 3          | t1,t2              | markY             | markX,bulk       | resource_a,resource_b | axis1:0.8,axis2:0.6   |
+| p_beta  | Beta         | p_beta     | 400        | 4                | 2              | 3           | 3          | 8          | t1                 | markX             | markY,grouped    | resource_a,resource_b | axis3:0.4             |
+| p_gamma | Gamma        | p_gamma    | 200        | 1                | 1              | 1           | 2          | 8          | t3                 |                   | markZ            | resource_a            | axis3:0.5,axis4:0.7   |
+| infra_a | Resource-A   | infra_a    | 80         | 2                | 1              | 1           | 0          | 99         |                    |                   | resource_a,infra |                       |                       |
+| infra_b | Resource-B   | infra_b    | 60         | 1                | 1              | 1           | 0          | 99         |                    |                   | resource_b,infra |                       |                       |
 ```
 
-`entities.md` grows the two optional enclosure fields (existing rows
+(Real games name these things in their own theme — animals for a zoo,
+equipment for a hospital, hazards for a golf course. See e.g. zoo's
+`animal_happiness.md` for a concrete walkthrough.)
+
+`entities.md` grows the two optional zone fields (existing rows
 unaffected):
 
 ```markdown
-| id            | display_name    | build_cost | maintenance_cost | footprint_x | footprint_y | sprite_key    | zone_kind | zone_tags |
-| ------------- | --------------- | ---------- | ---------------- | ----------- | ----------- | ------------- | -------------- | ------------------ |
-| grass_pen     | Grass Enclosure | 80         | 1                | 1           | 1           | grass_pen     | pen            | grass              |
-| rocky_pen     | Rocky Enclosure | 120        | 1                | 1           | 1           | rocky_pen     | pen            | grass,rocks        |
-| water_pen     | Water Enclosure | 200        | 2                | 1           | 1           | water_pen     | pen            | water              |
-| aviary_pen    | Aviary Cage     | 220        | 2                | 1           | 1           | aviary_pen    | aviary         | tall_cage,grass    |
+| id        | display_name | build_cost | maintenance_cost | footprint_x | footprint_y | sprite_key | zone_kind | zone_tags |
+| --------- | ------------ | ---------- | ---------------- | ----------- | ----------- | ---------- | --------- | --------- |
+| zt_alpha  | Tile Alpha   | 80         | 1                | 1           | 1           | zt_alpha   | alpha     | t1        |
+| zt_alpha2 | Tile Alpha+  | 120        | 1                | 1           | 1           | zt_alpha2  | alpha     | t1,t2     |
+| zt_alpha3 | Tile Alpha~  | 200        | 2                | 1           | 1           | zt_alpha3  | alpha     | t3        |
+| zt_beta   | Tile Beta    | 220        | 2                | 1           | 1           | zt_beta    | beta      | t3,t1     |
 ```
 
 Two adjacent tiles join the same region if they share `zone_kind`
@@ -249,55 +257,55 @@ list; else loud error.
 ## Lifecycle
 
 ```
-1. Player opens build menu → picks "Grass Enclosure" → places at (5, 5).
-   Engine: EntityRegistry.place(&"grass_pen", (5,5)) — same path as today.
+1. Player picks a zone-kind EntityDef → places at (5, 5).
+   Engine: EntityRegistry.place(&"<zone_def_id>", (5,5)) — same path as today.
    RegionRegistry sees a new zone tile → runs region detection →
-   creates Region #7 with cells=[(5,5)], area=1, habitats=[grass].
+   creates Region #7 with cells=[(5,5)], area=1, zone_tags=[…].
    region_created(7) fires.
 
-2. Player places another at (5, 6).
+2. Player places another zone tile of the same kind at (5, 6).
    RegionRegistry sees adjacency to Region #7 → extends it.
-   Region #7 now: cells=[(5,5),(5,6)], area=2, habitats=[grass].
+   Region #7 now: cells=[(5,5),(5,6)], area=2.
    region_changed(7) fires.
 
-3. Player extends until Region #7 has 9 cells and area >= some minimum.
-   Game UI flags it as a viable exhibit.
+3. Player extends until Region #7 reaches a size the game considers
+   "viable" (game-side check; engine has no opinion on minimums).
 
 4. Player clicks anywhere in Region #7 → game UI opens "Manage Region"
    panel. Pulls region from RegionRegistry.region_at_cell((5,5)).
 
-5. Player clicks "Add Animal" → picker shows every PlaceableDef whose
+5. Player clicks "Add Placeable" → picker shows every PlaceableDef whose
    required_zone_tags ⊆ region.provided_zone_tags. Greys out placeables
    that fail can_add_placement.
 
-6. Player picks "Lion" → RegionRegistry.add_placement(7, &"lion").
-   Engine deducts lion.build_cost from Ledger, registers a per-placement
-   maintenance recurring rule (same pattern as EntityDef.maintenance_cost
+6. Player picks a PlaceableDef → RegionRegistry.add_placement(7, &"…").
+   Engine deducts build_cost from Ledger and registers per-placement
+   maintenance recurring (same pattern as EntityDef.maintenance_cost
    since v0.3.0).
 
-7. Visitors arrive → EffectResolver.appeal_match_region(visitor_type,
-   region) gives the score (see region_appeal.md). Lion's appeal flows.
+7. Agents arrive → EffectResolver.appeal_match_region(agent_type,
+   region) gives the score (see region_appeal.md). The placement's
+   appeal flows through.
 
-8. Player places a "Rocky Enclosure" adjacent to Region #7.
-   Adjacency + same kind (both "pen") → joined. Region #7 now has area=10
-   and provided_zone_tags=[grass, rocks].
+8. Player places a different-but-compatible zone tile adjacent to
+   Region #7. Adjacency + same zone_kind → joined. Region #7 grows.
    region_changed(7) fires; cached appeals invalidate.
 
-9. Player removes one of the original grass tiles in the middle, splitting
-   the connected component in two. Region detection:
-   - If the split makes Region #7 invalid (animal's required_zone_tags no
-     longer satisfied), the placement is "stranded" — see below.
-   - Otherwise: Region #7 shrinks to one connected component, a new
-     Region #N is created for the other. Engine emits region_changed(7)
-     and region_created(N). Existing placements stay in Region #7;
-     placements that cells now belonging to N transfer there.
+9. Player removes one zone tile in the middle, splitting the connected
+   component:
+   - If the split makes Region #7 invalid (placement's required_zone_tags
+     no longer satisfied), the placement is "stranded" — see below.
+   - Otherwise: Region #7 keeps the largest component, a new Region #N
+     is created for each other component. Engine emits region_changed(7)
+     + region_created(N). Existing placements transfer to whichever
+     component contains their primary cell.
 ```
 
 ---
 
 ## Stranded placements
 
-When an zone tile is removed and the placement's region either:
+When a zone tile is removed and the placement's region either:
 - shrinks below `placement.space_required`, OR
 - loses one of `placement.required_zone_tags`,
 
@@ -314,13 +322,12 @@ mark stranded, never auto-remove (player keeps full control).
 - **Adjacency rule** — 4-neighborhood (N/S/E/W) or 8-neighborhood
   (including diagonals)? See [`region_detection.md`](region_detection.md)
   for the choice and rationale.
-- **Kind compatibility** — simple "same kind joins" rule or an explicit
-  compatibility table (e.g., `aviary` and `pen` tiles cannot merge but
-  `pen` and `rocky_pen` can)? Simple rule for MVP; table later.
+- **Kind compatibility** — simple "same kind joins" rule (MVP) vs. an
+  explicit compatibility table (later, only if a game needs it).
 - **Space accounting** — `region.area == cells.size()`, and a placeable's
-  `space_required` consumes that many cells. So 5 lions × 3 = 15 cells
-  needed; a 16-cell region holds them. Differs from the v1 spec where
-  `space_total` was a separate authored value.
+  `space_required` consumes that many cells. So 5 placeables × 3 cells
+  each = 15 cells needed; a 16-cell region holds them. Differs from the
+  v1 spec where `space_total` was a separate authored value.
 
 ---
 
@@ -331,17 +338,19 @@ Land everything in one release (per review feedback):
 1. `EntityDef.zone_kind` + `zone_tags` parsing in ContentDB
 2. `PlaceableDef` Resource + `placeables.md` parsing
 3. `RegionRegistry` autoload with full region-detection logic
-4. Placement add/remove with compatibility checks (with happiness math)
+4. Placement add/remove with compatibility checks
 5. Per-placement maintenance recurring (mirrors `EntityDef.maintenance_cost`)
-6. `EffectResolver.appeal_match_region` using saturation aggregation
-7. Tests for all four algorithm specs
+6. `EffectResolver.appeal_match_region` using saturation aggregation, with
+   the registered `IPlaceableHappiness` model providing the happiness
+   multiplier (default model returns 1.0 — games override)
+7. Tests for the three engine algorithms (region_detection,
+   placement_compatibility, region_appeal). Game-specific happiness
+   tests live in each game's repo.
 
-The zoo demo on top of this:
-- Replace the five hardcoded exhibit EntityDefs with zone tiles
-  (grass_pen, rocky_pen, water_pen, aviary_pen) + a set of animal
-  PlaceableDefs (lion, zebra, elephant, parrot, penguin)
-- New build menu groups: "Enclosures" / "Animals" / "Amenities"
-- Region selection UI: click any cell in a region → opens management panel
-- Repurpose existing sprites: the lion_exhibit.png becomes the lion
-  placeable sprite (just the animal); zone tiles get new 1-cell
-  sprites (grass patch, rock patch, water patch, cage panel)
+Game-side scope per release lives in each game's repo. For the zoo:
+see [`zoo-tycoon/design/algorithms/animal_happiness.md`](../../../zoo-tycoon/design/algorithms/animal_happiness.md)
+and the zoo's v0.4.0 zone/placeable tuning. Anticipated zoo-side work:
+swap the current "one EntityDef = one whole exhibit" model for
+zone-tile-built regions, add animal PlaceableDefs, register
+`ZooAnimalHappiness` against the engine extension point, and rework
+the build menu + region-selection UI.

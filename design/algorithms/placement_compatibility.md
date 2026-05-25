@@ -11,15 +11,14 @@ See [`zone_pattern.md`](zone_pattern.md) for the data model and
 
 Reject placements that would put the region in an obviously broken state:
 over space budget, missing a required zone tag, or mixing incompatible
-species. All other gameplay-quality concerns ("the placement is *valid*
-but the placeable will be unhappy") are scored by
-[`placeable_happiness.md`](placeable_happiness.md) and don't block
-placement.
+placeables. All other gameplay-quality concerns ("the placement is
+*valid* but the placeable will be unhappy") are scored by the registered
+`IPlaceableHappiness` implementation (see `zone_pattern.md`) and don't
+block placement.
 
-The "container capacity" concept from the v1 draft is gone — capacity
-emerges from `region.area` and `placeable.space_required`. A region with
-9 cells holds as many lions as fit at 3 cells each (i.e., 3), no separate
-capacity number.
+There is no separate "capacity" number — it emerges from `region.area`
+and `placeable.space_required`. A region with 9 cells holds as many
+3-space placeables as fit (i.e., 3).
 
 ## Inputs
 
@@ -76,42 +75,45 @@ function can_place(region, candidate_def):
 
 ## Worked Examples
 
-Tuning shared across the four specs:
+Engine specs use abstract fixtures — the engine doesn't ship lions or
+operating rooms. Per-game flavored walkthroughs (e.g. zoo's
+`animal_happiness.md`) demonstrate the same algorithms with concrete
+content.
 
 ```
 Placeables:
-  lion:    space_req 3, habitats [grass],        own [predator, big],   incompat [prey]
-  zebra:   space_req 2, habitats [grass],        own [prey, herd],      incompat [predator]
-  parrot:  space_req 1, habitats [tall_cage],    own [bird, colorful],  incompat []
-  penguin: space_req 1, habitats [water, grass], own [bird, social],    incompat []
+  P_A: space_req 3, required_zone_tags [t1],     own [markX],         incompat [markY]
+  P_B: space_req 2, required_zone_tags [t1],     own [markY],         incompat [markX]
+  P_C: space_req 1, required_zone_tags [t2],     own [markZ],         incompat []
+  P_D: space_req 1, required_zone_tags [t2, t3], own [markZ],         incompat []
 ```
 
 Regions built up from zone tiles (see `region_detection.md`):
 
 ```
-R1 (kind=pen,    area=4, habitats=[grass]):         four grass_pen tiles
-R2 (kind=pen,    area=9, habitats=[grass, rocks]):  six grass_pen + three rocky_pen
-R3 (kind=aviary, area=8, habitats=[tall_cage, grass]): eight aviary_pen tiles
-R4 (kind=pen,    area=12, habitats=[grass, water]): eight grass_pen + four water_pen
+R1 (kind=alpha, area=4,  provided_zone_tags=[t1]):       4 zone-α tiles with tag t1
+R2 (kind=alpha, area=9,  provided_zone_tags=[t1, t4]):   6 + 3 zone-α tiles (second set provides t4)
+R3 (kind=beta,  area=8,  provided_zone_tags=[t2, t1]):   8 zone-β tiles
+R4 (kind=alpha, area=12, provided_zone_tags=[t1, t3]):   12 zone-α tiles (some provide t3)
 ```
 
-| # | region | existing placements          | candidate | expected ok | expected reason                |
-|---|--------|------------------------------|-----------|------------:|--------------------------------|
-| 1 | R1     | []                           | lion      | true        | (3 of 4 space used after)      |
-| 2 | R1     | [lion]                       | lion      | false       | "over space: need 3, have 1"   |
-| 3 | R1     | [lion]                       | zebra     | false       | "incompatible with Lion"       |
-| 4 | R1     | [zebra]                      | lion      | false       | "incompatible with Zebra"      |
-| 5 | R1     | []                           | parrot    | false       | "missing zone tag: tall_cage"   |
-| 6 | R1     | []                           | penguin   | false       | "missing zone tag: water"       |
-| 7 | R2     | [lion]                       | lion      | true        | (9 area, 6 used after)         |
-| 8 | R2     | [lion, lion]                 | lion      | true        | (9 area, 9 used after)         |
-| 9 | R2     | [lion, lion, lion]           | lion      | false       | "over space: need 3, have 0"   |
-| 10| R3     | []                           | parrot    | true        | (1 of 8 space used after)      |
-| 11| R3     | [parrot]×8                   | parrot    | false       | "over space: need 1, have 0"   |
-| 12| R4     | []                           | penguin   | true        |                                |
-| 13| R4     | [penguin, lion, lion, lion]  | zebra     | false       | "incompatible with Lion"       |
-| 14| R4     | [lion]×3                     | lion      | true        | (12 area, 12 used after — exactly full) |
-| 15| R4     | [lion]×4                     | lion      | false       | "over space: need 3, have 0"   |
+| # | region | existing placements          | candidate | expected ok | expected reason                  |
+|---|--------|------------------------------|-----------|------------:|----------------------------------|
+| 1 | R1     | []                           | P_A       | true        | (3 of 4 space used after)        |
+| 2 | R1     | [P_A]                        | P_A       | false       | "over space: need 3, have 1"     |
+| 3 | R1     | [P_A]                        | P_B       | false       | "incompatible with P_A"          |
+| 4 | R1     | [P_B]                        | P_A       | false       | "incompatible with P_B"          |
+| 5 | R1     | []                           | P_C       | false       | "missing zone tag: t2"           |
+| 6 | R1     | []                           | P_D       | false       | "missing zone tag: t2"           |
+| 7 | R2     | [P_A]                        | P_A       | true        | (9 area, 6 used after)           |
+| 8 | R2     | [P_A, P_A]                   | P_A       | true        | (9 area, 9 used after)           |
+| 9 | R2     | [P_A, P_A, P_A]              | P_A       | false       | "over space: need 3, have 0"     |
+| 10| R3     | []                           | P_C       | true        | (1 of 8 space used after)        |
+| 11| R3     | [P_C]×8                      | P_C       | false       | "over space: need 1, have 0"     |
+| 12| R4     | []                           | P_D       | false       | "missing zone tag: t2"           |
+| 13| R4     | [P_A, P_A, P_A]              | P_B       | false       | "incompatible with P_A"          |
+| 14| R4     | [P_A]×3                      | P_A       | true        | (12 area, 12 used after — full)  |
+| 15| R4     | [P_A]×4                      | P_A       | false       | "over space: need 3, have 0"     |
 
 Each row above mirrors one-to-one as a GUT test in
 `tests/systems/test_placement_compatibility.gd`. Drift between table and
