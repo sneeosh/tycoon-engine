@@ -48,20 +48,12 @@ Stable reason prefixes so UIs can switch on them:
 
 ```
 function can_place(region, candidate_def):
-    # 1. Space
-    space_used = sum(ContentDB.placeable_defs[p.placeable_def_id].space_required
-                     for p in region.placements)
-    space_free = region.area - space_used
-    if candidate_def.space_required > space_free:
-        return {ok: false, reason: "over space: need %d, have %d" %
-                [candidate_def.space_required, space_free]}
+    # Order: incompatibility → zone tags → space.
+    # The most informative error wins. Incompat the player can't fix by
+    # expanding the region; zone-tag mismatch they can't either; space
+    # they can. So we surface the most-blocking issue first.
 
-    # 2. Zone tags
-    for tag in candidate_def.required_zone_tags:
-        if tag not in region.provided_zone_tags:
-            return {ok: false, reason: "missing zone tag: %s" % tag}
-
-    # 3. Incompatibility — symmetric. Either side declaring the other's
+    # 1. Incompatibility — symmetric. Either side declaring the other's
     #    tags as a deal-breaker blocks placement.
     for existing in region.placements:
         existing_def = ContentDB.placeable_defs[existing.placeable_def_id]
@@ -69,6 +61,19 @@ function can_place(region, candidate_def):
             return {ok: false, reason: "incompatible with %s" % existing_def.display_name}
         if any(tag in existing_def.incompatible_tags for tag in candidate_def.own_tags):
             return {ok: false, reason: "incompatible with %s" % existing_def.display_name}
+
+    # 2. Zone tags
+    for tag in candidate_def.required_zone_tags:
+        if tag not in region.provided_zone_tags:
+            return {ok: false, reason: "missing zone tag: %s" % tag}
+
+    # 3. Space
+    space_used = sum(ContentDB.placeable_defs[p.placeable_def_id].space_required
+                     for p in region.placements)
+    space_free = region.area - space_used
+    if candidate_def.space_required > space_free:
+        return {ok: false, reason: "over space: need %d, have %d" %
+                [candidate_def.space_required, space_free]}
 
     return {ok: true, reason: ""}
 ```

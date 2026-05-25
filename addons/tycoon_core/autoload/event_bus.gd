@@ -39,3 +39,13 @@ signal reputation_changed(new_value: int)
 signal save_completed(slot: String)
 signal load_completed(slot: String)
 signal load_failed(slot: String, reason: String)
+
+# RegionRegistry (v0.4.0). See design/algorithms/zone_pattern.md +
+# region_detection.md. Regions emerge from connected zone tiles; their
+# lifecycle is reactive to entity_placed / entity_removed.
+signal region_created(region_id: int)
+signal region_destroyed(region_id: int)
+signal region_changed(region_id: int)
+signal placement_added(region_id: int, index: int)
+signal placement_removed(region_id: int, index: int)
+signal placement_stranded(region_id: int, index: int)

@@ -7,6 +7,60 @@ The engine follows semver: `MAJOR.MINOR.PATCH` where MAJOR bumps break
 schema/interface compatibility, MINOR bumps add capabilities without
 breaking existing games, and PATCH bumps are bug fixes.
 
+## v0.4.0 — 2026-05-25
+
+Container/contents pattern. Players build regions by placing zone-kind
+tiles on the grid; regions emerge from connected components; placeables
+go INSIDE regions. The generic "zoo exhibit / hospital ward / golf hole"
+shape every tycoon eventually wants.
+
+Specs (all in `design/algorithms/`):
+- `zone_pattern.md` — overview, schema, extension points, lifecycle
+- `region_detection.md` — connected-components algorithm (add/remove/merge/split)
+- `placement_compatibility.md` — incompat → zone tags → space check order
+- `region_appeal.md` — saturation aggregation modulated by happiness model
+
+### Added
+- `EntityDef.zone_kind: StringName` + `EntityDef.zone_tags: Array[StringName]`
+  — when `zone_kind` is non-empty, the entity is a zone tile and
+  participates in region detection.
+- `PlaceableDef` Resource — the thing that goes INSIDE a region. Has
+  build/maintenance cost, space accounting, zone-tag requirements,
+  own/incompatible tags for compatibility, appeal_contribution, plus
+  engine-passive metadata (`social_min/max`, `needs_provided_tags`) that
+  game-side `IPlaceableHappiness` impls consume.
+- `Placement` Resource — runtime state for one placeable in one region.
+  Engine reads `state["primary_cell"]` (override) and
+  `state["attitude"]` (multiplier on happiness, default 1.0); never
+  writes either.
+- `Region` runtime class — derived state; `region.area` is the cells count.
+- `IPlaceableHappiness` interface — engine ships a no-op default
+  (returns 1.0). Games register their own via
+  `EffectResolver.register_happiness_model(impl)`.
+- `RegionRegistry` autoload — reactive to `entity_placed`/`entity_removed`,
+  maintains the regions dictionary, exposes `can_add_placement`,
+  `add_placement`, `remove_placement`, `region_at_cell`, `region_for_tile`,
+  `all_regions`. Mirrors `region_*` and `placement_*` signals from
+  EventBus for caller convenience.
+- `EffectResolver.compute_region_appeal(region)` + `appeal_match_region(...)`
+  — saturation aggregation per `region_appeal.md`.
+- `ContentDB` parses optional `## Placeables` section in `placeables.md`
+  and optional `zone_kind` / `zone_tags` columns on `entities.md`.
+  Cross-ref validation: every `required_zone_tags` must be providable
+  by some zone tile.
+- Per-placement maintenance auto-registered as a recurring expense on
+  `add_placement` and unregistered on `remove_placement` — same pattern
+  as `EntityDef.maintenance_cost` since v0.3.0.
+
+### Tests
+- 36 new GUT tests: 11 region_detection, 15 placement_compatibility, 10
+  region_appeal. Engine suite: 212 → 248. All green.
+
+### Internal
+- `EffectResolver.appeal_match` refactored to delegate to
+  `_appeal_match_against_profile(agent_type, profile)`, so both the
+  static-EntityDef and dynamic-Region appeal paths share the scoring math.
+
 ## v0.3.1 — 2026-05-24
 
 Patch release surfaced by zoo's first attempt at trait-driven agents:

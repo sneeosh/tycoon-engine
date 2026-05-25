@@ -27,6 +27,12 @@ extends Node
 var _effect_cache: Array = []
 var _cache_dirty: bool = true
 
+# v0.4.0 — pluggable per-placement happiness multiplier consumed by
+# compute_region_appeal. Default returns 1.0 (so happiness-agnostic games
+# get straightforward "sum of contributions" automatically). Games override
+# via register_happiness_model. See design/algorithms/zone_pattern.md.
+var _happiness_model: IPlaceableHappiness = IPlaceableHappiness.new()
+
 
 func _ready() -> void:
 	# Revenue runs at day_ending (before Ledger settles) so the income
@@ -163,6 +169,10 @@ func compute_quality_modifier() -> float:
 # Tolerance ≤ 0 → treated as a tiny epsilon to avoid division by zero
 # (effectively makes any non-exact match score 0).
 func appeal_match(agent_type: AgentType, entity_def: EntityDef) -> float:
+	return _appeal_match_against_profile(agent_type, entity_def.appeal_profile)
+
+
+func _appeal_match_against_profile(agent_type: AgentType, profile: Dictionary) -> float:
 	if agent_type.preferences.is_empty():
 		return 1.0
 	var sum: float = 0.0
@@ -171,12 +181,52 @@ func appeal_match(agent_type: AgentType, entity_def: EntityDef) -> float:
 		var pref: Vector2 = agent_type.preferences[axis]
 		var preferred: float = pref.x
 		var tolerance: float = maxf(pref.y, 0.0001)
-		var actual: float = entity_def.appeal_profile.get(axis, 0.0)
+		var actual: float = profile.get(axis, 0.0)
 		var diff: float = absf(actual - preferred)
 		var score: float = maxf(0.0, 1.0 - diff / tolerance)
 		sum += score
 		n += 1
 	return sum / n if n > 0 else 1.0
+
+
+# --- Region appeal (v0.4.0 — see design/algorithms/region_appeal.md) ----
+
+# Saturation aggregation of per-placement appeal contributions, modulated
+# by the registered IPlaceableHappiness model. Returns an appeal_profile
+# Dict[axis -> float in [0,1]] suitable for _appeal_match_against_profile.
+func compute_region_appeal(region: Region) -> Dictionary:
+	# axis (StringName) -> running PRODUCT of (1 - effective_contrib)
+	var remaining: Dictionary = {}
+	for i in region.placements.size():
+		var placement: Placement = region.placements[i]
+		var p_def: PlaceableDef = ContentDB.placeable_defs.get(placement.placeable_def_id)
+		if p_def == null:
+			continue
+		var happiness: float = clampf(_happiness_model.compute_happiness(region, i), 0.0, 1.0)
+		for axis in p_def.appeal_contribution.keys():
+			var raw_contrib: float = p_def.appeal_contribution[axis]
+			var effective: float = clampf(raw_contrib * happiness, 0.0, 1.0)
+			var current: float = remaining.get(axis, 1.0)
+			remaining[axis] = current * (1.0 - effective)
+	var appeal: Dictionary = {}
+	for axis in remaining.keys():
+		appeal[axis] = clampf(1.0 - remaining[axis], 0.0, 1.0)
+	return appeal
+
+
+# Region-aware appeal_match — same scoring math as appeal_match, applied
+# to the region's *computed* appeal_profile from its placements.
+func appeal_match_region(agent_type: AgentType, region: Region) -> float:
+	return _appeal_match_against_profile(agent_type, compute_region_appeal(region))
+
+
+# Games register their IPlaceableHappiness implementation at startup. Reset
+# to the engine default by passing null.
+func register_happiness_model(impl: IPlaceableHappiness) -> void:
+	if impl == null:
+		_happiness_model = IPlaceableHappiness.new()
+	else:
+		_happiness_model = impl
 
 
 # --- Cache management ----------------------------------------------------

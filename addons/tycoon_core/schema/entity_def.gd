@@ -23,3 +23,16 @@ class_name EntityDef
 @export var appeal_profile: Dictionary = {}
 @export var effects: Array[Effect] = []
 @export var upgrade_chain: Array[UpgradeTier] = []
+
+# --- Zone tile fields (v0.4.0 — see design/algorithms/zone_pattern.md) ---
+#
+# Empty `zone_kind` means this entity is NOT a zone tile (existing behavior
+# — every pre-v0.4 EntityDef has empty zone_kind by default). Non-empty
+# flags this EntityDef as a tile that participates in region detection:
+# two edge-adjacent tiles with the same `zone_kind` join the same Region.
+@export var zone_kind: StringName = &""
+
+# Zone tags this tile contributes when it's part of a region. A region's
+# effective `provided_zone_tags` is the union across all member tiles.
+# Games define what these tags mean (`grass`, `water`, `sterile`, …).
+@export var zone_tags: Array[StringName] = []

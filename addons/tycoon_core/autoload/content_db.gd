@@ -17,6 +17,7 @@ var balance_config: BalanceConfig
 var needs: Dictionary = {}            # StringName -> Need
 var agent_types: Dictionary = {}      # StringName -> AgentType
 var entity_defs: Dictionary = {}      # StringName -> EntityDef
+var placeable_defs: Dictionary = {}   # StringName -> PlaceableDef (v0.4.0)
 var conditions: Dictionary = {}       # StringName -> ConditionModifier
 var unlock_nodes: Dictionary = {}     # StringName -> UnlockNode
 var recurring_rules: Array[Dictionary] = []  # raw rule dicts for Ledger
@@ -47,6 +48,7 @@ func load_all(dir: String = TUNING_DIR) -> void:
 	needs.clear()
 	agent_types.clear()
 	entity_defs.clear()
+	placeable_defs.clear()
 	conditions.clear()
 	unlock_nodes.clear()
 	recurring_rules.clear()
@@ -60,6 +62,7 @@ func load_all(dir: String = TUNING_DIR) -> void:
 	_load_file(dir, "needs.md", _compile_needs, true)
 	_load_file(dir, "entities.md", _compile_entities, true)
 	_load_file(dir, "agents.md", _compile_agents, true)
+	_load_file(dir, "placeables.md", _compile_placeables, true)
 	_load_file(dir, "progression.md", _compile_progression, true)
 
 	_validate_cross_refs()
@@ -218,6 +221,11 @@ func _compile_entities(parsed: Dictionary) -> void:
 			ed.sprite_key = _cell_string_name(path, row, line, "sprite_key")
 			ed.satisfies = _cell_array_string_names(row, "satisfies")
 			ed.appeal_profile = _cell_dict_string_name_float(path, row, line, "appeal_profile")
+			# v0.4.0 zone fields (optional — pre-v0.4 tuning files omit them).
+			if row.has("zone_kind"):
+				ed.zone_kind = _cell_string_name(path, row, line, "zone_kind")
+			if row.has("zone_tags"):
+				ed.zone_tags = _cell_array_string_names(row, "zone_tags")
 			entity_defs[ed.id] = ed
 
 	# Effects, applied to their owning entity by entity_id.
@@ -329,6 +337,40 @@ func _compile_agents(parsed: Dictionary) -> void:
 			agent.preferences[axis_id] = Vector2(preferred, tolerance)
 
 
+func _compile_placeables(parsed: Dictionary) -> void:
+	# v0.4.0 — see design/algorithms/zone_pattern.md.
+	# Optional file. Single "## Placeables" section, one PlaceableDef per row.
+	var path: String = parsed["path"]
+	var section: Dictionary = parsed["sections"].get("Placeables", {})
+	if section.is_empty() or section.get("tables", []).is_empty():
+		return
+	var table: Dictionary = section["tables"][0]
+	for row_idx in table["rows"].size():
+		var row: Dictionary = table["rows"][row_idx]
+		var line: int = table["row_lines"][row_idx]
+		var pd := PlaceableDef.new()
+		pd.id = _cell_string_name(path, row, line, "id")
+		if pd.id == &"":
+			continue
+		pd.display_name = row.get("display_name", String(pd.id))
+		pd.sprite_key = _cell_string_name(path, row, line, "sprite_key")
+		pd.build_cost = _cell_int(path, row, line, "build_cost", 0, 1_000_000_000)
+		pd.maintenance_cost = _cell_int(path, row, line, "maintenance_cost", 0, 1_000_000_000)
+		pd.space_required = _cell_int(path, row, line, "space_required", 0, 1_000_000)
+		pd.space_ideal = _cell_int(path, row, line, "space_ideal", 0, 1_000_000)
+		pd.required_zone_tags = _cell_array_string_names(row, "required_zone_tags")
+		pd.own_tags = _cell_array_string_names(row, "own_tags")
+		pd.incompatible_tags = _cell_array_string_names(row, "incompatible_tags")
+		pd.appeal_contribution = _cell_dict_string_name_float(path, row, line, "appeal_contribution")
+		if row.has("social_min"):
+			pd.social_min = _cell_int(path, row, line, "social_min", 0, 1_000_000)
+		if row.has("social_max"):
+			pd.social_max = _cell_int(path, row, line, "social_max", 0, 1_000_000)
+		if row.has("needs_provided_tags"):
+			pd.needs_provided_tags = _cell_array_string_names(row, "needs_provided_tags")
+		placeable_defs[pd.id] = pd
+
+
 func _compile_progression(parsed: Dictionary) -> void:
 	var path: String = parsed["path"]
 	var section: Dictionary = parsed["sections"].get("Unlock nodes", {})
@@ -371,6 +413,20 @@ func _validate_cross_refs() -> void:
 			if not (entity_defs.has(unlocked_id) or agent_types.has(unlocked_id)):
 				load_errors.append("unlock node '%s' unlocks unknown id '%s' (not an entity or agent type)" % [un.id, unlocked_id])
 	_detect_unlock_cycles()
+
+	# v0.4.0 — every placeable's required_zone_tags must be providable by
+	# at least one zone-kind EntityDef. Otherwise the placeable can never
+	# be placed in any region.
+	var all_provided: Dictionary = {}
+	for ed: EntityDef in entity_defs.values():
+		if ed.zone_kind == &"":
+			continue
+		for tag in ed.zone_tags:
+			all_provided[tag] = true
+	for pd: PlaceableDef in placeable_defs.values():
+		for tag in pd.required_zone_tags:
+			if not all_provided.has(tag):
+				load_errors.append("placeable '%s' requires zone tag '%s' which no zone tile provides" % [pd.id, tag])
 
 
 # DFS over the unlock graph; flags any back-edge as a cycle. Without this,
