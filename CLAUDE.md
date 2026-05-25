@@ -58,6 +58,9 @@ addons/tycoon_core/
                    #   ISatisfactionModel, IQualityRating)
   systems/         # effect resolution, appeal matching, spawn loop, etc.
   loader/          # markdown tuning loader
+  harness/         # optional headless dev driver (ScriptedSession,
+                   #   Screenshotter) — drive a game end-to-end via JSON
+                   #   for CI / AI / unattended iteration. Theme-agnostic.
 design/
   tuning/          # CANONICAL parameter files (plaintext markdown)
   algorithms/      # algorithm specs with worked examples
