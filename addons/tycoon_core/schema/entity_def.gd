@@ -11,6 +11,13 @@ class_name EntityDef
 @export var display_name: String = ""
 @export var build_cost: int = 0
 @export var maintenance_cost: int = 0
+# Spec: design/algorithms/accounting.md
+# Straight-line depreciation horizon for the Accounting subsystem (v0.5.0).
+# 0 = no depreciation; the full build_cost is recognized as an immediate
+# operating expense on the IS (matches the cash story). >0 = the cost is
+# capitalized as PP&E and recognized as depreciation expense over N days.
+# Optional column in design/tuning/entities.md; defaults to 0 when absent.
+@export var useful_life_days: int = 0
 # Tile-grid footprint. Vector2i(1, 1) = single-tile.
 @export var footprint: Vector2i = Vector2i(1, 1)
 # Logical key into the asset manifest, not a file path.

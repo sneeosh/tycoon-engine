@@ -27,6 +27,7 @@ RegionRegistry="*res://addons/tycoon_core/autoload/region_registry.gd"
 AgentPool="*res://addons/tycoon_core/autoload/agent_pool.gd"
 EffectResolver="*res://addons/tycoon_core/autoload/effect_resolver.gd"
 ProgressionManager="*res://addons/tycoon_core/autoload/progression_manager.gd"
+Accounting="*res://addons/tycoon_core/autoload/accounting.gd"
 SaveService="*res://addons/tycoon_core/autoload/save_service.gd"
 
 [editor_plugins]

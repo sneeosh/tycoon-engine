@@ -13,6 +13,9 @@ class_name PlaceableDef
 @export var sprite_key: StringName = &""
 @export var build_cost: int = 0
 @export var maintenance_cost: int = 0   # auto-registered per-placement on add
+# Spec: design/algorithms/accounting.md
+# See EntityDef.useful_life_days — same semantics for placeables (v0.5.0).
+@export var useful_life_days: int = 0
 
 # Cells this placement consumes within its region. The space-accounting
 # rule is in placement_compatibility.md: a region with `area` cells can

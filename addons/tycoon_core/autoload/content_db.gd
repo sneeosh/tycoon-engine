@@ -226,6 +226,10 @@ func _compile_entities(parsed: Dictionary) -> void:
 				ed.zone_kind = _cell_string_name(path, row, line, "zone_kind")
 			if row.has("zone_tags"):
 				ed.zone_tags = _cell_array_string_names(row, "zone_tags")
+			# v0.5.0 accounting field — optional, defaults to 0
+			# (no depreciation, immediate expense).
+			if row.has("useful_life_days"):
+				ed.useful_life_days = _cell_int(path, row, line, "useful_life_days", 0, 1_000_000)
 			entity_defs[ed.id] = ed
 
 	# Effects, applied to their owning entity by entity_id.
@@ -368,6 +372,10 @@ func _compile_placeables(parsed: Dictionary) -> void:
 			pd.social_max = _cell_int(path, row, line, "social_max", 0, 1_000_000)
 		if row.has("needs_provided_tags"):
 			pd.needs_provided_tags = _cell_array_string_names(row, "needs_provided_tags")
+		# v0.5.0 accounting field — optional, defaults to 0
+		# (no depreciation, immediate expense).
+		if row.has("useful_life_days"):
+			pd.useful_life_days = _cell_int(path, row, line, "useful_life_days", 0, 1_000_000)
 		placeable_defs[pd.id] = pd
 
 

@@ -7,6 +7,65 @@ The engine follows semver: `MAJOR.MINOR.PATCH` where MAJOR bumps break
 schema/interface compatibility, MINOR bumps add capabilities without
 breaking existing games, and PATCH bumps are bug fixes.
 
+## v0.5.0 — 2026-05-25
+
+US-GAAP-style Accounting overlay. The cash-basis `Ledger` continues as the
+authority for cash; a new `Accounting` autoload reads from it (and a small
+non-cash journal of its own) to produce a real Income Statement and Balance
+Sheet at any reporting period. Every tycoon game built on the engine
+benefits, and it's a faithful surface for teaching capex vs opex,
+straight-line depreciation, retained earnings, and the accounting equation.
+
+Spec: `design/algorithms/accounting.md` (8 worked examples, all mirrored as
+tests).
+
+### Added
+- `EntityDef.useful_life_days: int` (default 0) — when `> 0`, the asset is
+  capitalized as PP&E and depreciated straight-line over N days; when `0`,
+  the build cost is recognized as an immediate operating expense (matches
+  the cash story, fully backward-compatible with pre-v0.5 tuning files).
+- `PlaceableDef.useful_life_days: int` — same semantics for placeables.
+- `ContentDB._compile_entities` / `_compile_placeables` parse the new
+  optional `useful_life_days` column; absent column defaults to 0.
+- `Accounting` autoload — listens to `entity_placed/removed` and
+  `placement_added/removed` to maintain an asset register; subscribes to
+  `day_ending` to post daily straight-line depreciation (non-cash; tracked
+  in `depreciation_journal`, never posted to Ledger). Exposes:
+  - `register_category(source_id, Category)` — game-side categorization
+    for the IS (`REVENUE`, `COGS`, `OPERATING_EXPENSE`, `OTHER_INCOME`,
+    `OTHER_EXPENSE`, `CAPITAL_EXPENDITURE`); uncategorized falls into
+    `OTHER_*` so books still balance.
+  - `get_income_statement(start_day, end_day)` and convenience wrappers
+    `_today` / `_for_period` / `_for_month` / `_all_time`.
+  - `get_balance_sheet(as_of_day)` and `_today` — returns assets (cash,
+    PP&E gross, accumulated depreciation, PP&E net), liabilities (0 for
+    v1), equity (starting capital + retained earnings), plus a
+    `balances` bool and `balance_check_delta` for verifying the
+    accounting equation.
+  - Disposal P&L: on `entity_removed`/`placement_removed`, computes book
+    value, compares to the just-posted Ledger refund, and journals a
+    gain (`OTHER_INCOME`) or loss (`OTHER_EXPENSE`). The refund cash is
+    *not* double-counted on the IS — its source is marked
+    `CAPITAL_EXPENDITURE` and excluded from `OTHER_INCOME` aggregation.
+
+### Tests
+- 17 new GUT tests in `tests/autoload/test_accounting.gd`: 8 mirror the
+  spec's worked examples; 9 cover schema wiring, gain on disposal, full-
+  life depreciation summing exactly to cost, uncategorized fallback, and
+  the period-convenience wrappers. Engine suite: 248 → 265. All green.
+
+### Design notes
+- Depreciation timing: an asset acquired on day D begins depreciating on
+  day D's settlement (the half-year-convention analogue, simpler than
+  mid-period proration).
+- Asset disposal: `Accounting` reads the just-posted refund from the tail
+  of `Ledger.transactions` (matched by `source_id`), rather than parsing
+  `sell_<def_id>` conventions. No coupling pressure on Ledger; all the
+  disposal logic stays inside Accounting.
+- Depreciation is a **non-cash expense** — Accounting does not post to
+  Ledger, so the cash balance reported on the BS remains the Ledger's
+  truth.
+
 ## v0.4.0 — 2026-05-25
 
 Container/contents pattern. Players build regions by placing zone-kind
