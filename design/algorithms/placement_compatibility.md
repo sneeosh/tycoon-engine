@@ -1,28 +1,32 @@
-# Placement Compatibility — Can this placeable go in this container?
+# Placement Compatibility — Can this placeable go in this region?
 
-Run before every `EntityRegistry.add_placement(...)` and again every time
+Run before every `RegionRegistry.add_placement(...)` and again every time
 the build-menu picker filters available placeables. Returns a structured
 result so UIs can grey out invalid options with a tooltip explaining why.
 
-See [`container_pattern.md`](container_pattern.md) for the schema this
-operates on.
+See [`enclosure_pattern.md`](enclosure_pattern.md) for the data model and
+[`region_detection.md`](region_detection.md) for how regions are derived.
 
 ## Intent
 
-Reject placements that would put the container in an obviously broken state:
-over capacity, over its space budget, missing a required habitat, or mixing
-incompatible species. All other gameplay-quality concerns (a placement is
-"valid" but the placeable will be unhappy) are scored separately by
-[`placeable_happiness.md`](placeable_happiness.md) — they don't block
+Reject placements that would put the region in an obviously broken state:
+over space budget, missing a required habitat, or mixing incompatible
+species. All other gameplay-quality concerns ("the placement is *valid*
+but the placeable will be unhappy") are scored by
+[`placeable_happiness.md`](placeable_happiness.md) and don't block
 placement.
+
+The "container capacity" concept from the v1 draft is gone — capacity
+emerges from `region.area` and `placeable.space_required`. A region with
+9 cells holds as many lions as fit at 3 cells each (i.e., 3), no separate
+capacity number.
 
 ## Inputs
 
-- `container_def` — `EntityDef` with container fields set
-- `placements` — `Array[Placement]` currently in this container instance
+- `region` — `Region` from `RegionRegistry`
 - `candidate_def` — `PlaceableDef` the caller wants to add
-- For each existing placement, the corresponding `PlaceableDef` is looked
-  up via `ContentDB.placeable_defs[placement.placeable_def_id]`
+- For each existing placement in `region.placements`, the corresponding
+  `PlaceableDef` is looked up via `ContentDB.placeable_defs`
 
 ## Output
 
@@ -37,7 +41,6 @@ A `Dictionary` with this shape:
 
 Stable reason prefixes so UIs can switch on them:
 
-- `"over capacity"`
 - `"over space"` (followed by `: need N, have M`)
 - `"missing habitat: <tag>"`
 - `"incompatible with <existing.display_name>"`
@@ -45,27 +48,23 @@ Stable reason prefixes so UIs can switch on them:
 ## Pseudocode
 
 ```
-function can_place(container_def, placements, candidate_def):
-    # 1. Capacity
-    if len(placements) + 1 > container_def.container_capacity:
-        return {ok: false, reason: "over capacity"}
-
-    # 2. Space
+function can_place(region, candidate_def):
+    # 1. Space
     space_used = sum(ContentDB.placeable_defs[p.placeable_def_id].space_required
-                     for p in placements)
-    if space_used + candidate_def.space_required > container_def.container_space_total:
+                     for p in region.placements)
+    space_free = region.area - space_used
+    if candidate_def.space_required > space_free:
         return {ok: false, reason: "over space: need %d, have %d" %
-                [candidate_def.space_required,
-                 container_def.container_space_total - space_used]}
+                [candidate_def.space_required, space_free]}
 
-    # 3. Habitat
+    # 2. Habitat
     for tag in candidate_def.required_habitats:
-        if tag not in container_def.container_provided_habitats:
+        if tag not in region.provided_habitats:
             return {ok: false, reason: "missing habitat: %s" % tag}
 
-    # 4. Incompatibility — symmetric. Either side declaring the other's
+    # 3. Incompatibility — symmetric. Either side declaring the other's
     #    tags as a deal-breaker blocks placement.
-    for existing in placements:
+    for existing in region.placements:
         existing_def = ContentDB.placeable_defs[existing.placeable_def_id]
         if any(tag in candidate_def.incompatible_tags for tag in existing_def.own_tags):
             return {ok: false, reason: "incompatible with %s" % existing_def.display_name}
@@ -77,50 +76,43 @@ function can_place(container_def, placements, candidate_def):
 
 ## Worked Examples
 
-Tuning for all examples (zoo flavor):
+Tuning shared across the four specs:
 
 ```
-Containers:
-  small_pen: capacity 2, space_total 9, habitats [grass]
-  large_pen: capacity 5, space_total 16, habitats [grass, rocks]
-  aviary:    capacity 8, space_total 9,  habitats [tall_cage, grass]
-  aquarium:  capacity 4, space_total 12, habitats [water]
-
 Placeables:
-  lion:    space_req 3, habitats [grass], own [predator, big],   incompat [prey]
-  zebra:   space_req 2, habitats [grass], own [prey, herd],      incompat [predator]
-  parrot:  space_req 1, habitats [tall_cage], own [bird, colorful], incompat []
-  penguin: space_req 1, habitats [water, grass], own [bird, social], incompat []
+  lion:    space_req 3, habitats [grass],        own [predator, big],   incompat [prey]
+  zebra:   space_req 2, habitats [grass],        own [prey, herd],      incompat [predator]
+  parrot:  space_req 1, habitats [tall_cage],    own [bird, colorful],  incompat []
+  penguin: space_req 1, habitats [water, grass], own [bird, social],    incompat []
 ```
 
-| # | container | existing      | candidate | expected ok | expected reason                |
-|---|-----------|---------------|-----------|------------:|--------------------------------|
-| 1 | small_pen | []            | lion      | true        | (empty reason)                 |
-| 2 | small_pen | [lion]        | lion      | true        | (2/2 capacity, 6/9 space)      |
-| 3 | small_pen | [lion, lion]  | lion      | false       | "over capacity"                |
-| 4 | small_pen | [lion, lion]  | zebra     | false       | "over capacity"                |
-| 5 | small_pen | [lion]        | zebra     | false       | "incompatible with Lion"       |
-| 6 | small_pen | [zebra]       | lion      | false       | "incompatible with Zebra"      |
-| 7 | small_pen | []            | parrot    | false       | "missing habitat: tall_cage"   |
-| 8 | small_pen | []            | penguin   | false       | "missing habitat: water"       |
-| 9 | aquarium  | []            | penguin   | false       | "missing habitat: grass"       |
-| 10| aviary    | []            | parrot    | true        | (1/8 capacity, 1/9 space)      |
-| 11| aviary    | [parrot]×8    | parrot    | false       | "over capacity"                |
-| 12| large_pen | [lion×5]                          | lion  | false | "over capacity"             |
-| 13| large_pen | [lion×4]                          | lion  | true  | (5/5 capacity, 15/16 space) |
-| 14| aviary    | [parrot×8]                        | parrot| false | "over capacity"             |
-| 15| large_pen | [lion×4] (12/16 space)            | zebra | false | "incompatible with Lion" *  |
-| 16| large_pen | []                                | zebra | true  |                             |
+Regions built up from enclosure tiles (see `region_detection.md`):
 
-\* Row 15: zebra would fit by capacity (5/5) and space (14/16) but lion's
-`incompat [prey]` matches zebra's `own [prey]`, so the compatibility check
-rejects it before space is even relevant. Incompatibility is symmetric;
-either side's `incompatible_tags` matching the other's `own_tags` blocks.
+```
+R1 (kind=pen,    area=4, habitats=[grass]):         four grass_pen tiles
+R2 (kind=pen,    area=9, habitats=[grass, rocks]):  six grass_pen + three rocky_pen
+R3 (kind=aviary, area=8, habitats=[tall_cage, grass]): eight aviary_pen tiles
+R4 (kind=pen,    area=12, habitats=[grass, water]): eight grass_pen + four water_pen
+```
 
-(Capacity is checked before space, space before habitat, habitat before
-incompatibility. The order isn't load-bearing for correctness — only one
-rejection wins — but it determines which message the player sees first.)
+| # | region | existing placements          | candidate | expected ok | expected reason                |
+|---|--------|------------------------------|-----------|------------:|--------------------------------|
+| 1 | R1     | []                           | lion      | true        | (3 of 4 space used after)      |
+| 2 | R1     | [lion]                       | lion      | false       | "over space: need 3, have 1"   |
+| 3 | R1     | [lion]                       | zebra     | false       | "incompatible with Lion"       |
+| 4 | R1     | [zebra]                      | lion      | false       | "incompatible with Zebra"      |
+| 5 | R1     | []                           | parrot    | false       | "missing habitat: tall_cage"   |
+| 6 | R1     | []                           | penguin   | false       | "missing habitat: water"       |
+| 7 | R2     | [lion]                       | lion      | true        | (9 area, 6 used after)         |
+| 8 | R2     | [lion, lion]                 | lion      | true        | (9 area, 9 used after)         |
+| 9 | R2     | [lion, lion, lion]           | lion      | false       | "over space: need 3, have 0"   |
+| 10| R3     | []                           | parrot    | true        | (1 of 8 space used after)      |
+| 11| R3     | [parrot]×8                   | parrot    | false       | "over space: need 1, have 0"   |
+| 12| R4     | []                           | penguin   | true        |                                |
+| 13| R4     | [penguin, lion, lion, lion]  | zebra     | false       | "incompatible with Lion"       |
+| 14| R4     | [lion]×3                     | lion      | true        | (12 area, 12 used after — exactly full) |
+| 15| R4     | [lion]×4                     | lion      | false       | "over space: need 3, have 0"   |
 
-Each row above must mirror one-to-one as a GUT test in
+Each row above mirrors one-to-one as a GUT test in
 `tests/systems/test_placement_compatibility.gd`. Drift between table and
 code is a build failure.
