@@ -1,0 +1,44 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache Godot binary
+        id: cache-godot
+        uses: actions/cache@v4
+        with:
+          path: ~/godot/godot
+          key: godot-4.5.1-stable-linux
+
+      - name: Install Godot 4.5.1
+        if: steps.cache-godot.outputs.cache-hit != 'true'
+        run: |
+          set -e
+          mkdir -p ~/godot
+          cd ~/godot
+          wget -q https://github.com/godotengine/godot/releases/download/4.5.1-stable/Godot_v4.5.1-stable_linux.x86_64.zip
+          unzip -q Godot_v4.5.1-stable_linux.x86_64.zip
+          mv Godot_v4.5.1-stable_linux.x86_64 godot
+          chmod +x godot
+
+      # Two passes: the first import populates the global class cache;
+      # without it, GUT's class_name references fail to resolve on a fresh
+      # checkout. The second pass is a clean reimport that should be quiet.
+      - name: Import project (pass 1 — populate class cache)
+        run: timeout 90 ~/godot/godot --headless --import || true
+
+      - name: Import project (pass 2 — clean)
+        run: timeout 90 ~/godot/godot --headless --import
+
+      - name: Run GUT tests
+        run: ~/godot/godot --headless -s res://addons/gut/gut_cmdln.gd -gdir=res://tests -ginclude_subdirs -gexit -gprefix=test_ -gsuffix=.gd

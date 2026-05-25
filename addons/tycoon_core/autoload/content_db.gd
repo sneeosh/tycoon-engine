@@ -1,0 +1,463 @@
+extends Node
+# Spec: docs/build-plan.md §3 (autoloads — ContentDB), §3.3a (design-editable
+# layer), Prompt 4.
+#
+# Single source of compiled content. Parses design/tuning/*.md at startup,
+# compiles into typed Resources, validates cross-references, and applies the
+# results to live autoloads (SimClock, Ledger). Markdown is the canonical
+# source — generated Resources are never persisted to .tres in this engine.
+#
+# Loud failures: every error carries `<path>:<line>: reason`. If any error is
+# found during a load, ContentDB stays in `has_errors() == true` and does not
+# apply changes to SimClock/Ledger. Tests inspect `load_errors` directly.
+
+const TUNING_DIR := "res://design/tuning/"
+
+var balance_config: BalanceConfig
+var needs: Dictionary = {}            # StringName -> Need
+var agent_types: Dictionary = {}      # StringName -> AgentType
+var entity_defs: Dictionary = {}      # StringName -> EntityDef
+var conditions: Dictionary = {}       # StringName -> ConditionModifier
+var unlock_nodes: Dictionary = {}     # StringName -> UnlockNode
+var recurring_rules: Array[Dictionary] = []  # raw rule dicts for Ledger
+
+var load_errors: Array[String] = []
+var is_loaded: bool = false
+
+
+func _ready() -> void:
+	load_all()
+	# Only push_error here, not inside load_all(), so tests can drive the
+	# loader with deliberately-bad fixtures without tripping GUT's error
+	# tracker. Production boots still see the loud failure on real bad data.
+	if has_errors():
+		for e in load_errors:
+			push_error(e)
+
+
+func has_errors() -> bool:
+	return not load_errors.is_empty()
+
+
+# Reload everything from `dir`. Used by autoload boot (default dir) and tests
+# (custom dir pointing at fixtures).
+func load_all(dir: String = TUNING_DIR) -> void:
+	load_errors.clear()
+	balance_config = BalanceConfig.new()
+	needs.clear()
+	agent_types.clear()
+	entity_defs.clear()
+	conditions.clear()
+	unlock_nodes.clear()
+	recurring_rules.clear()
+	is_loaded = false
+
+	# Load order matters: producers before consumers so cross-ref validation
+	# has the full picture at the end.
+	_load_file(dir, "balance.md", _compile_balance, false)
+	_load_file(dir, "economy.md", _compile_economy, false)
+	_load_file(dir, "conditions.md", _compile_conditions, true)
+	_load_file(dir, "needs.md", _compile_needs, true)
+	_load_file(dir, "entities.md", _compile_entities, true)
+	_load_file(dir, "agents.md", _compile_agents, true)
+	_load_file(dir, "progression.md", _compile_progression, true)
+
+	_validate_cross_refs()
+
+	if has_errors():
+		return
+
+	# Apply to live autoloads.
+	SimClock.configure(balance_config.ticks_per_day, balance_config.days_per_period)
+	Ledger.reset(balance_config.starting_cash)
+	for rule in recurring_rules:
+		Ledger.register_recurring(rule)
+	EntityRegistry.configure(balance_config.remove_refund_fraction)
+	AgentPool.configure(balance_config.base_spawn_rate)
+	is_loaded = true
+
+
+# --- Lookup queries --------------------------------------------------------
+
+func get_entity_def(id: StringName) -> EntityDef:
+	return entity_defs.get(id)
+
+func get_agent_type(id: StringName) -> AgentType:
+	return agent_types.get(id)
+
+func get_need(id: StringName) -> Need:
+	return needs.get(id)
+
+func get_condition(id: StringName) -> ConditionModifier:
+	return conditions.get(id)
+
+func get_unlock_node(id: StringName) -> UnlockNode:
+	return unlock_nodes.get(id)
+
+
+# --- File loader plumbing --------------------------------------------------
+
+func _load_file(dir: String, filename: String, compiler: Callable, optional: bool) -> void:
+	var path := dir + filename
+	if not FileAccess.file_exists(path):
+		if not optional:
+			load_errors.append("%s: required tuning file is missing" % path)
+		return
+	var parsed := MarkdownTuningParser.parse(path)
+	for e in parsed["errors"]:
+		load_errors.append(e)
+	if parsed["errors"].is_empty():
+		compiler.call(parsed)
+
+
+# --- Compilers -------------------------------------------------------------
+
+func _compile_balance(parsed: Dictionary) -> void:
+	var path: String = parsed["path"]
+	var time := _require_section(path, parsed, "Time")
+	if time != null:
+		balance_config.ticks_per_day = _scalar_int(path, time, "ticks_per_day", 1, 100000)
+		balance_config.days_per_period = _scalar_int(path, time, "days_per_period", 1, 1000)
+	var spawn := _require_section(path, parsed, "Spawn curve")
+	if spawn != null:
+		balance_config.spawn_curve_min_multiplier = _scalar_float(path, spawn, "spawn_curve_min_multiplier", 0.0, 10.0)
+		balance_config.spawn_curve_max_multiplier = _scalar_float(path, spawn, "spawn_curve_max_multiplier", 0.0, 10.0)
+		balance_config.spawn_curve_midpoint = _scalar_float(path, spawn, "spawn_curve_midpoint", 0.0, 1.0)
+		balance_config.spawn_curve_steepness = _scalar_float(path, spawn, "spawn_curve_steepness", 0.1, 50.0)
+	# `## Entities` is optional in balance.md; falls back to schema defaults.
+	var entities_section: Dictionary = parsed["sections"].get("Entities", {})
+	if not entities_section.is_empty():
+		balance_config.remove_refund_fraction = _scalar_float(path, entities_section, "remove_refund_fraction", 0.0, 1.0)
+	var agents_section: Dictionary = parsed["sections"].get("Agents", {})
+	if not agents_section.is_empty():
+		balance_config.base_spawn_rate = _scalar_float(path, agents_section, "base_spawn_rate", 0.0, 100.0)
+
+
+func _compile_economy(parsed: Dictionary) -> void:
+	var path: String = parsed["path"]
+	var globals := _require_section(path, parsed, "Globals")
+	if globals != null:
+		balance_config.starting_cash = _scalar_int(path, globals, "starting_cash", 0, 1_000_000_000)
+		balance_config.daily_settlement_enabled = _scalar_bool(path, globals, "daily_settlement_enabled")
+	var recurring: Dictionary = parsed["sections"].get("Recurring expenses", {})
+	if recurring.is_empty() or recurring.get("tables", []).is_empty():
+		return
+	var table: Dictionary = recurring["tables"][0]
+	for row_idx in table["rows"].size():
+		var row: Dictionary = table["rows"][row_idx]
+		var line: int = table["row_lines"][row_idx]
+		var id := _cell_string_name(path, row, line, "id")
+		if id == &"":
+			continue
+		var amount := _cell_int(path, row, line, "amount", 0, 1_000_000_000)
+		recurring_rules.append({
+			"id": id,
+			"label": row.get("label", String(id)),
+			"amount": amount,
+			"kind": Ledger.KIND_EXPENSE,
+			"period": _cell_string_name(path, row, line, "period"),
+		})
+
+
+func _compile_conditions(parsed: Dictionary) -> void:
+	var path: String = parsed["path"]
+	var section: Dictionary = parsed["sections"].get("Conditions", {})
+	if section.is_empty() or section.get("tables", []).is_empty():
+		return
+	var table: Dictionary = section["tables"][0]
+	for row_idx in table["rows"].size():
+		var row: Dictionary = table["rows"][row_idx]
+		var line: int = table["row_lines"][row_idx]
+		var c := ConditionModifier.new()
+		c.id = _cell_string_name(path, row, line, "id")
+		if c.id == &"":
+			continue
+		c.label = row.get("label", String(c.id))
+		c.active = _cell_bool(path, row, line, "active", false)
+		conditions[c.id] = c
+
+
+func _compile_needs(parsed: Dictionary) -> void:
+	var path: String = parsed["path"]
+	var section: Dictionary = parsed["sections"].get("Needs", {})
+	if section.is_empty() or section.get("tables", []).is_empty():
+		return
+	var table: Dictionary = section["tables"][0]
+	for row_idx in table["rows"].size():
+		var row: Dictionary = table["rows"][row_idx]
+		var line: int = table["row_lines"][row_idx]
+		var n := Need.new()
+		n.id = _cell_string_name(path, row, line, "id")
+		if n.id == &"":
+			continue
+		n.display_name = row.get("display_name", String(n.id))
+		n.base_decay_per_tick = _cell_float(path, row, line, "base_decay_per_tick", 0.0, 1.0)
+		needs[n.id] = n
+
+
+func _compile_entities(parsed: Dictionary) -> void:
+	var path: String = parsed["path"]
+
+	# Entities first.
+	var entities_section: Dictionary = parsed["sections"].get("Entities", {})
+	if not entities_section.is_empty() and not entities_section.get("tables", []).is_empty():
+		var table: Dictionary = entities_section["tables"][0]
+		for row_idx in table["rows"].size():
+			var row: Dictionary = table["rows"][row_idx]
+			var line: int = table["row_lines"][row_idx]
+			var ed := EntityDef.new()
+			ed.id = _cell_string_name(path, row, line, "id")
+			if ed.id == &"":
+				continue
+			ed.display_name = row.get("display_name", String(ed.id))
+			ed.build_cost = _cell_int(path, row, line, "build_cost", 0, 1_000_000_000)
+			ed.maintenance_cost = _cell_int(path, row, line, "maintenance_cost", 0, 1_000_000_000)
+			ed.footprint = Vector2i(
+				_cell_int(path, row, line, "footprint_x", 1, 100),
+				_cell_int(path, row, line, "footprint_y", 1, 100))
+			ed.sprite_key = _cell_string_name(path, row, line, "sprite_key")
+			ed.satisfies = _cell_array_string_names(row, "satisfies")
+			ed.appeal_profile = _cell_dict_string_name_float(path, row, line, "appeal_profile")
+			entity_defs[ed.id] = ed
+
+	# Effects, applied to their owning entity by entity_id.
+	var effects_section: Dictionary = parsed["sections"].get("Effects", {})
+	if not effects_section.is_empty() and not effects_section.get("tables", []).is_empty():
+		var table: Dictionary = effects_section["tables"][0]
+		for row_idx in table["rows"].size():
+			var row: Dictionary = table["rows"][row_idx]
+			var line: int = table["row_lines"][row_idx]
+			var entity_id := _cell_string_name(path, row, line, "entity_id")
+			var owner: EntityDef = entity_defs.get(entity_id)
+			if owner == null:
+				load_errors.append("%s:%d: effect references unknown entity_id '%s'" % [path, line, entity_id])
+				continue
+			var e := Effect.new()
+			e.id = _cell_string_name(path, row, line, "id")
+			e.target = _cell_string_name(path, row, line, "target")
+			e.operation = _cell_string_name(path, row, line, "operation")
+			e.magnitude = _cell_float(path, row, line, "magnitude", -1e9, 1e9)
+			e.proximity = _cell_float(path, row, line, "proximity", 0.0, 1000.0)
+			e.conditions = _cell_array_string_names(row, "conditions")
+			owner.effects.append(e)
+
+
+func _compile_agents(parsed: Dictionary) -> void:
+	var path: String = parsed["path"]
+	var section: Dictionary = parsed["sections"].get("Agent types", {})
+	if not section.is_empty() and not section.get("tables", []).is_empty():
+		var table: Dictionary = section["tables"][0]
+		for row_idx in table["rows"].size():
+			var row: Dictionary = table["rows"][row_idx]
+			var line: int = table["row_lines"][row_idx]
+			var at := AgentType.new()
+			at.id = _cell_string_name(path, row, line, "id")
+			if at.id == &"":
+				continue
+			at.display_name = row.get("display_name", String(at.id))
+			at.spawn_weight = _cell_float(path, row, line, "spawn_weight", 0.0, 100.0)
+			agent_types[at.id] = at
+
+	# Need specs — attach Needs to AgentTypes with overrides.
+	var specs_section: Dictionary = parsed["sections"].get("Need specs", {})
+	if not specs_section.is_empty() and not specs_section.get("tables", []).is_empty():
+		var table: Dictionary = specs_section["tables"][0]
+		for row_idx in table["rows"].size():
+			var row: Dictionary = table["rows"][row_idx]
+			var line: int = table["row_lines"][row_idx]
+			var agent_id := _cell_string_name(path, row, line, "agent_id")
+			var need_id := _cell_string_name(path, row, line, "need_id")
+			var agent: AgentType = agent_types.get(agent_id)
+			var need: Need = needs.get(need_id)
+			if agent == null:
+				load_errors.append("%s:%d: need spec references unknown agent_id '%s'" % [path, line, agent_id])
+				continue
+			if need == null:
+				load_errors.append("%s:%d: need spec references unknown need_id '%s'" % [path, line, need_id])
+				continue
+			var ns := NeedSpec.new()
+			ns.need = need
+			ns.initial_level = _cell_float(path, row, line, "initial_level", 0.0, 1.0)
+			ns.decay_rate_multiplier = _cell_float(path, row, line, "decay_rate_multiplier", 0.0, 10.0)
+			ns.threshold = _cell_float(path, row, line, "threshold", 0.0, 1.0)
+			agent.needs.append(ns)
+
+
+func _compile_progression(parsed: Dictionary) -> void:
+	var path: String = parsed["path"]
+	var section: Dictionary = parsed["sections"].get("Unlock nodes", {})
+	if section.is_empty() or section.get("tables", []).is_empty():
+		return
+	var table: Dictionary = section["tables"][0]
+	for row_idx in table["rows"].size():
+		var row: Dictionary = table["rows"][row_idx]
+		var line: int = table["row_lines"][row_idx]
+		var un := UnlockNode.new()
+		un.id = _cell_string_name(path, row, line, "id")
+		if un.id == &"":
+			continue
+		un.label = row.get("label", String(un.id))
+		un.prerequisites = _cell_array_string_names(row, "prerequisites")
+		un.cost = _cell_int(path, row, line, "cost", 0, 1_000_000_000)
+		un.reputation_required = _cell_int(path, row, line, "reputation_required", 0, 1_000_000)
+		un.unlocks = _cell_array_string_names(row, "unlocks")
+		unlock_nodes[un.id] = un
+
+
+# --- Cross-ref validation --------------------------------------------------
+
+func _validate_cross_refs() -> void:
+	for ed: EntityDef in entity_defs.values():
+		for need_id in ed.satisfies:
+			if not needs.has(need_id):
+				load_errors.append("entity '%s' satisfies unknown need '%s'" % [ed.id, need_id])
+		for eff: Effect in ed.effects:
+			for cond_id in eff.conditions:
+				if not conditions.has(cond_id):
+					load_errors.append("entity '%s' effect '%s' references unknown condition '%s'" % [ed.id, eff.id, cond_id])
+	for un: UnlockNode in unlock_nodes.values():
+		for prereq in un.prerequisites:
+			if not unlock_nodes.has(prereq):
+				load_errors.append("unlock node '%s' has unknown prerequisite '%s'" % [un.id, prereq])
+		# `unlocks` is intentionally polymorphic — could point at entities,
+		# agent types, or future kinds. Validate against the union.
+		for unlocked_id in un.unlocks:
+			if not (entity_defs.has(unlocked_id) or agent_types.has(unlocked_id)):
+				load_errors.append("unlock node '%s' unlocks unknown id '%s' (not an entity or agent type)" % [un.id, unlocked_id])
+
+
+# --- Section / scalar / cell helpers --------------------------------------
+
+func _require_section(path: String, parsed: Dictionary, name: String) -> Variant:
+	if not parsed["sections"].has(name):
+		load_errors.append("%s: missing required section '## %s'" % [path, name])
+		return null
+	return parsed["sections"][name]
+
+
+func _scalar_int(path: String, section: Dictionary, key: String, min_val: int, max_val: int) -> int:
+	var entry: Dictionary = section["scalars"].get(key, {})
+	if entry.is_empty():
+		load_errors.append("%s:%d: missing required key '%s'" % [path, section["line"], key])
+		return 0
+	var raw: String = entry["raw"]
+	if not raw.is_valid_int():
+		load_errors.append("%s:%d: '%s' is not an integer: '%s'" % [path, entry["line"], key, raw])
+		return 0
+	var val := raw.to_int()
+	if val < min_val or val > max_val:
+		load_errors.append("%s:%d: '%s' out of range [%d, %d]: %d" % [path, entry["line"], key, min_val, max_val, val])
+	return val
+
+
+func _scalar_float(path: String, section: Dictionary, key: String, min_val: float, max_val: float) -> float:
+	var entry: Dictionary = section["scalars"].get(key, {})
+	if entry.is_empty():
+		load_errors.append("%s:%d: missing required key '%s'" % [path, section["line"], key])
+		return 0.0
+	var raw: String = entry["raw"]
+	if not raw.is_valid_float():
+		load_errors.append("%s:%d: '%s' is not a number: '%s'" % [path, entry["line"], key, raw])
+		return 0.0
+	var val := raw.to_float()
+	if val < min_val or val > max_val:
+		load_errors.append("%s:%d: '%s' out of range [%f, %f]: %f" % [path, entry["line"], key, min_val, max_val, val])
+	return val
+
+
+func _scalar_bool(path: String, section: Dictionary, key: String) -> bool:
+	var entry: Dictionary = section["scalars"].get(key, {})
+	if entry.is_empty():
+		load_errors.append("%s:%d: missing required key '%s'" % [path, section["line"], key])
+		return false
+	var raw: String = String(entry["raw"]).to_lower()
+	if raw == "true":
+		return true
+	if raw == "false":
+		return false
+	load_errors.append("%s:%d: '%s' is not true/false: '%s'" % [path, entry["line"], key, entry["raw"]])
+	return false
+
+
+func _cell_int(path: String, row: Dictionary, line: int, col: String, min_val: int, max_val: int) -> int:
+	var raw: String = String(row.get(col, "")).strip_edges()
+	if raw.is_empty():
+		load_errors.append("%s:%d: missing column '%s'" % [path, line, col])
+		return 0
+	if not raw.is_valid_int():
+		load_errors.append("%s:%d: column '%s' is not an integer: '%s'" % [path, line, col, raw])
+		return 0
+	var val := raw.to_int()
+	if val < min_val or val > max_val:
+		load_errors.append("%s:%d: column '%s' out of range [%d, %d]: %d" % [path, line, col, min_val, max_val, val])
+	return val
+
+
+func _cell_float(path: String, row: Dictionary, line: int, col: String, min_val: float, max_val: float) -> float:
+	var raw: String = String(row.get(col, "")).strip_edges()
+	if raw.is_empty():
+		load_errors.append("%s:%d: missing column '%s'" % [path, line, col])
+		return 0.0
+	if not raw.is_valid_float():
+		load_errors.append("%s:%d: column '%s' is not a number: '%s'" % [path, line, col, raw])
+		return 0.0
+	var val := raw.to_float()
+	if val < min_val or val > max_val:
+		load_errors.append("%s:%d: column '%s' out of range [%f, %f]: %f" % [path, line, col, min_val, max_val, val])
+	return val
+
+
+func _cell_bool(path: String, row: Dictionary, line: int, col: String, default_val: bool) -> bool:
+	var raw: String = String(row.get(col, "")).strip_edges().to_lower()
+	if raw.is_empty():
+		return default_val
+	if raw == "true":
+		return true
+	if raw == "false":
+		return false
+	load_errors.append("%s:%d: column '%s' is not true/false: '%s'" % [path, line, col, raw])
+	return default_val
+
+
+func _cell_string_name(path: String, row: Dictionary, line: int, col: String) -> StringName:
+	var raw: String = String(row.get(col, "")).strip_edges()
+	if raw.is_empty():
+		# Don't append an error here for optional columns; callers check empty.
+		# Required-column checks happen on the int/float helpers.
+		return &""
+	return StringName(raw)
+
+
+func _cell_array_string_names(row: Dictionary, col: String) -> Array[StringName]:
+	var out: Array[StringName] = []
+	var raw: String = String(row.get(col, "")).strip_edges()
+	if raw.is_empty():
+		return out
+	for token in raw.split(","):
+		var t := token.strip_edges()
+		if not t.is_empty():
+			out.append(StringName(t))
+	return out
+
+
+func _cell_dict_string_name_float(path: String, row: Dictionary, line: int, col: String) -> Dictionary:
+	# Format: "k:v,k:v" — empty cell = empty dict.
+	var out := {}
+	var raw: String = String(row.get(col, "")).strip_edges()
+	if raw.is_empty():
+		return out
+	for pair in raw.split(","):
+		var p := pair.strip_edges()
+		if p.is_empty():
+			continue
+		var colon := p.find(":")
+		if colon < 0:
+			load_errors.append("%s:%d: column '%s' expected 'key:value' pairs: '%s'" % [path, line, col, p])
+			continue
+		var key := p.substr(0, colon).strip_edges()
+		var val_raw := p.substr(colon + 1).strip_edges()
+		if not val_raw.is_valid_float():
+			load_errors.append("%s:%d: column '%s' value not a number for key '%s': '%s'" % [path, line, col, key, val_raw])
+			continue
+		out[StringName(key)] = val_raw.to_float()
+	return out
