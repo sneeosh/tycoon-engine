@@ -75,10 +75,24 @@ class_name PlaceableDef extends Resource
 @export var incompatible_tags: Array[StringName] = []
 @export var own_tags: Array[StringName] = []
 
+# Tags this placeable needs in its region's "provided pool" (= the union
+# of own_tags from every OTHER placement in the same region). Each missing
+# tag applies a happiness penalty. Empty for infrastructure placeables
+# that PROVIDE tags instead of requiring them. See placeable_happiness.md.
+@export var needs_provided_tags: Array[StringName] = []
+
 @export var appeal_contribution: Dictionary = {}
 @export var social_min: int = 0
 @export var social_max: int = 99
 ```
+
+This lets the game express things like:
+- A `lion` needs `provides_food` + `provides_water` in its region.
+- A `feeding_trough` placeable provides `[provides_food, infrastructure]`
+  via `own_tags`.
+- A region with a lion but no trough → lion's happiness penalised; that
+  penalty flows through into the region's appeal score → visitors see a
+  worse exhibit.
 
 ### `Region` (new runtime concept — not a Resource, derived state)
 
@@ -106,7 +120,13 @@ class_name Placement extends Resource
 
 @export var placeable_def_id: StringName = &""
 @export var added_at_tick: int = 0
-@export var state: Dictionary = {}             # game-owned per-individual
+
+# Game-owned per-individual state. The one key the engine READS (but never
+# writes) is `attitude: float in [0, 1]` — a multiplier on this individual's
+# computed happiness (see placeable_happiness.md). Games drive attitude
+# from whatever per-individual systems they want (trauma, age, illness,
+# personality, time-since-last-feed). Default 1.0 (no modifier).
+@export var state: Dictionary = {}
 ```
 
 ---
@@ -158,11 +178,13 @@ signal placement_removed(region_id: int, index: int)
 ```markdown
 ## Placeables
 
-| id     | display_name | sprite_key | build_cost | maintenance_cost | space_required | space_ideal | social_min | social_max | required_habitats | incompatible_tags | own_tags         | appeal_contribution     |
-| ------ | ------------ | ---------- | ---------- | ---------------- | -------------- | ----------- | ---------- | ---------- | ----------------- | ----------------- | ---------------- | ----------------------- |
-| lion   | Lion         | lion       | 800        | 8                | 3              | 4           | 1          | 3          | grass,rocks       | prey              | predator,big     | thrill:0.8,danger:0.6   |
-| zebra  | Zebra        | zebra      | 400        | 4                | 2              | 3           | 3          | 8          | grass             | predator          | prey,herd        | beauty:0.4              |
-| parrot | Parrot       | parrot     | 200        | 1                | 1              | 1           | 2          | 8          | tall_cage         |                   | bird,colorful    | beauty:0.5,exotic:0.7   |
+| id             | display_name   | sprite_key     | build_cost | maintenance_cost | space_required | space_ideal | social_min | social_max | required_habitats | incompatible_tags | own_tags                       | needs_provided_tags        | appeal_contribution     |
+| -------------- | -------------- | -------------- | ---------- | ---------------- | -------------- | ----------- | ---------- | ---------- | ----------------- | ----------------- | ------------------------------ | -------------------------- | ----------------------- |
+| lion           | Lion           | lion           | 800        | 8                | 3              | 4           | 1          | 3          | grass,rocks       | prey              | predator,big                   | provides_food,provides_water | thrill:0.8,danger:0.6   |
+| zebra          | Zebra          | zebra          | 400        | 4                | 2              | 3           | 3          | 8          | grass             | predator          | prey,herd                      | provides_food,provides_water | beauty:0.4              |
+| parrot         | Parrot         | parrot         | 200        | 1                | 1              | 1           | 2          | 8          | tall_cage         |                   | bird,colorful                  | provides_food              | beauty:0.5,exotic:0.7   |
+| feeding_trough | Feeding Trough | feeding_trough | 80         | 2                | 1              | 1           | 0          | 99         |                   |                   | provides_food,infrastructure   |                            |                         |
+| water_trough   | Water Trough   | water_trough   | 60         | 1                | 1              | 1           | 0          | 99         |                   |                   | provides_water,infrastructure  |                            |                         |
 ```
 
 `entities.md` grows the two optional enclosure fields (existing rows
