@@ -294,3 +294,59 @@ func test_cycle_detection_accepts_acyclic_chain() -> void:
 	assert_eq(cycle_errors, 0, "expected 0 cycle errors in acyclic graph")
 	ContentDB.unlock_nodes.clear()
 	ContentDB.load_errors.clear()
+
+
+# --- v0.3.1: traits + preferences from tuning -----------------------------
+
+func test_real_agents_traits_populated_from_tuning() -> void:
+	ContentDB.load_all()
+	var visitor: AgentType = ContentDB.get_agent_type(&"visitor")
+	assert_not_null(visitor)
+	assert_true(visitor.trait_ranges.has(&"walking_speed"))
+	var range_v: Vector2 = visitor.trait_ranges[&"walking_speed"]
+	assert_almost_eq(range_v.x, 0.12, 0.0001)
+	assert_almost_eq(range_v.y, 0.26, 0.0001)
+
+
+func test_real_agents_preferences_populated_from_tuning() -> void:
+	ContentDB.load_all()
+	var premium: AgentType = ContentDB.get_agent_type(&"premium")
+	assert_not_null(premium)
+	assert_true(premium.preferences.has(&"thrill"))
+	var pref: Vector2 = premium.preferences[&"thrill"]
+	assert_almost_eq(pref.x, 0.7, 0.0001)
+	assert_almost_eq(pref.y, 0.3, 0.0001)
+
+
+func test_traits_section_with_unknown_agent_id_records_error() -> void:
+	_clear_fixtures()
+	_write("balance.md", _minimal_balance_md())
+	_write("economy.md", _minimal_economy_md())
+	_write("needs.md", "## Needs\n\n| id | display_name | base_decay_per_tick |\n| -- | ------------ | ------------------- |\n| h  | H            | 0.001               |\n")
+	_write("agents.md",
+		"## Agent types\n\n| id  | display_name | spawn_weight |\n| --- | ------------ | ------------ |\n| v   | V            | 1.0          |\n\n" +
+		"## Traits\n\n| agent_id | trait | min  | max |\n| -------- | ----- | ---- | --- |\n| ghost    | speed | 0.1  | 0.2 |\n")
+	ContentDB.load_all(TMP_DIR)
+	var has_ghost_error := false
+	for e in ContentDB.load_errors:
+		if "ghost" in e:
+			has_ghost_error = true
+			break
+	assert_true(has_ghost_error, "unknown agent_id in traits should be flagged; got: %s" % str(ContentDB.load_errors))
+
+
+func test_traits_with_inverted_range_records_error() -> void:
+	_clear_fixtures()
+	_write("balance.md", _minimal_balance_md())
+	_write("economy.md", _minimal_economy_md())
+	_write("needs.md", "## Needs\n\n| id | display_name | base_decay_per_tick |\n| -- | ------------ | ------------------- |\n| h  | H            | 0.001               |\n")
+	_write("agents.md",
+		"## Agent types\n\n| id  | display_name | spawn_weight |\n| --- | ------------ | ------------ |\n| v   | V            | 1.0          |\n\n" +
+		"## Traits\n\n| agent_id | trait | min  | max |\n| -------- | ----- | ---- | --- |\n| v        | speed | 0.5  | 0.1 |\n")
+	ContentDB.load_all(TMP_DIR)
+	var bad_range := false
+	for e in ContentDB.load_errors:
+		if "min" in e and "max" in e:
+			bad_range = true
+			break
+	assert_true(bad_range, "inverted trait range should be flagged; got: %s" % str(ContentDB.load_errors))

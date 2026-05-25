@@ -27,3 +27,16 @@ ContentDB once content is loaded.
 | visitor  | thirst  | 1.0           | 1.0                   | 0.3       |
 | premium  | hunger  | 1.0           | 0.7                   | 0.4       |
 | premium  | thirst  | 1.0           | 0.7                   | 0.4       |
+
+## Traits
+
+| agent_id | trait         | min  | max  |
+| -------- | ------------- | ---- | ---- |
+| visitor  | walking_speed | 0.12 | 0.26 |
+| premium  | walking_speed | 0.16 | 0.28 |
+
+## Preferences
+
+| agent_id | axis   | preferred | tolerance |
+| -------- | ------ | --------- | --------- |
+| premium  | thrill | 0.7       | 0.3       |

@@ -282,6 +282,52 @@ func _compile_agents(parsed: Dictionary) -> void:
 			ns.threshold = _cell_float(path, row, line, "threshold", 0.0, 1.0)
 			agent.needs.append(ns)
 
+	# Traits — optional per-agent sampling ranges. Each row contributes one
+	# axis. AgentPool.spawn() samples uniformly from [min, max] using the
+	# sim RNG at spawn time and writes the result to agent.traits[axis].
+	var traits_section: Dictionary = parsed["sections"].get("Traits", {})
+	if not traits_section.is_empty() and not traits_section.get("tables", []).is_empty():
+		var table: Dictionary = traits_section["tables"][0]
+		for row_idx in table["rows"].size():
+			var row: Dictionary = table["rows"][row_idx]
+			var line: int = table["row_lines"][row_idx]
+			var agent_id := _cell_string_name(path, row, line, "agent_id")
+			var trait_id := _cell_string_name(path, row, line, "trait")
+			var min_v := _cell_float(path, row, line, "min", -1e9, 1e9)
+			var max_v := _cell_float(path, row, line, "max", -1e9, 1e9)
+			var agent: AgentType = agent_types.get(agent_id)
+			if agent == null:
+				load_errors.append("%s:%d: trait '%s' references unknown agent_id '%s'" %
+					[path, line, trait_id, agent_id])
+				continue
+			if min_v > max_v:
+				load_errors.append("%s:%d: trait '%s' min (%f) > max (%f)" %
+					[path, line, trait_id, min_v, max_v])
+				continue
+			agent.trait_ranges[trait_id] = Vector2(min_v, max_v)
+
+	# Preferences — optional appeal-match weights. Each row contributes one
+	# axis. EffectResolver.appeal_match(agent_type, entity_def) scores how
+	# well an entity's appeal_profile[axis] matches `preferred`, falling
+	# off past `tolerance`. Type-level (shared across all agents of this
+	# type); per-agent variation comes from traits.
+	var prefs_section: Dictionary = parsed["sections"].get("Preferences", {})
+	if not prefs_section.is_empty() and not prefs_section.get("tables", []).is_empty():
+		var table: Dictionary = prefs_section["tables"][0]
+		for row_idx in table["rows"].size():
+			var row: Dictionary = table["rows"][row_idx]
+			var line: int = table["row_lines"][row_idx]
+			var agent_id := _cell_string_name(path, row, line, "agent_id")
+			var axis_id := _cell_string_name(path, row, line, "axis")
+			var preferred := _cell_float(path, row, line, "preferred", -1e9, 1e9)
+			var tolerance := _cell_float(path, row, line, "tolerance", 0.0, 1e9)
+			var agent: AgentType = agent_types.get(agent_id)
+			if agent == null:
+				load_errors.append("%s:%d: preference '%s' references unknown agent_id '%s'" %
+					[path, line, axis_id, agent_id])
+				continue
+			agent.preferences[axis_id] = Vector2(preferred, tolerance)
+
 
 func _compile_progression(parsed: Dictionary) -> void:
 	var path: String = parsed["path"]

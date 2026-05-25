@@ -7,6 +7,33 @@ The engine follows semver: `MAJOR.MINOR.PATCH` where MAJOR bumps break
 schema/interface compatibility, MINOR bumps add capabilities without
 breaking existing games, and PATCH bumps are bug fixes.
 
+## v0.3.1 — 2026-05-24
+
+Patch release surfaced by zoo's first attempt at trait-driven agents:
+the schema fields existed and AgentPool sampled them at spawn, but
+ContentDB had no parser for them, so games couldn't actually populate
+them from `design/tuning/*.md` without writing setup code.
+
+### Added
+- `ContentDB._compile_agents` parses two new optional sections in
+  `agents.md`:
+  - `## Traits` — per-axis sampling ranges. Columns: `agent_id`,
+    `trait`, `min`, `max`. Each row contributes one trait; AgentPool
+    samples uniformly from [min, max] at spawn and writes to
+    `agent.traits[trait]`. Inverted ranges (min > max) and unknown
+    `agent_id`s are flagged as load_errors with file:line.
+  - `## Preferences` — type-level appeal-match parameters. Columns:
+    `agent_id`, `axis`, `preferred`, `tolerance`. Consumed by
+    `EffectResolver.appeal_match(agent_type, entity_def)`. Type-level
+    (not per-agent); use traits for per-agent variation.
+- 4 new tests covering happy-path + error reporting; engine suite:
+  208 → 212.
+
+### Internal
+- Engine's example `design/tuning/agents.md` now demonstrates both
+  sections so games have a working reference. The shipped values are
+  example-only — games override per their own tuning.
+
 ## v0.3.0 — 2026-05-24
 
 CTO/QA review pass: ships the P0/P1/P2/P3 items identified in the v0.2.0
