@@ -7,6 +7,84 @@ The engine follows semver: `MAJOR.MINOR.PATCH` where MAJOR bumps break
 schema/interface compatibility, MINOR bumps add capabilities without
 breaking existing games, and PATCH bumps are bug fixes.
 
+## v0.6.0 — 2026-06-07
+
+Agent navigation on a constrained walkable network — the generic tycoon
+primitive behind "agents move on a player-built network of walkable cells
+toward goals, with needs decaying during travel." Filed by the Zoo Tycoon
+seam report (`zoo-tycoon/design/engine_seam_agent_navigation.md`); every
+tycoon game on this engine (paths, aisles, corridors, platforms) needs it,
+so it lives in the engine, not a game repo. Additive — existing games are
+unaffected until they opt in.
+
+Spec: `design/algorithms/navigation.md` (9 worked examples, all mirrored as
+tests).
+
+### Added
+- `WalkableNetwork` (`systems/walkable_network.gd`) — runtime graph of the
+  cells an agent may stand on, each with a `traversal_cost` and optional
+  access `tags`. Structural queries (`has_cell`, `traversal_cost`,
+  `can_enter`, `neighbors`, `min_cost`), the engagement-distance helper
+  (`within_engagement_distance` with `MANHATTAN`/`NETWORK` metrics), and a
+  per-network route cache invalidated wholesale on any mutation. Derived
+  runtime data (like `Region`), never authored.
+- `INetworkNavigator` (`interfaces/i_network_navigator.gd`) — the pathing
+  extension point: `find_path`, `step`, `reachable_from`, `nearest`,
+  `score_goals`, plus the `NO_STEP` sentinel. Games override only for path
+  preference, per-archetype routing, or avoidance.
+- `AStarNetworkNavigator` (`systems/astar_network_navigator.gd`) — the
+  shipped default: deterministic A\* over the 4-neighbour graph (admissible
+  Manhattan×min-cost heuristic, fixed tie-break), a fail-soft
+  `max_path_expansions` budget, and incremental per-tick `step`ping that
+  walks a cached route instead of re-planning every tick.
+- `NavigationRegistry` autoload — owns the WalkableNetworks (plural; one per
+  `network_id` so indoor/outdoor or staff/public stay separate) and the
+  bound navigator. Rebuilds networks reactively from placed walkable
+  `EntityInstance`s on `entity_placed`/`entity_removed` (the same model as
+  `RegionRegistry`), emits `network_changed(network_id, dirty_rect)`, and
+  exposes convenience `path`/`reachable_from`/`nearest`/
+  `within_engagement_distance` plus `rebuild_all()` (for post-load
+  reconstruction) and `set_navigator()`.
+- `EventBus.network_changed(network_id, dirty_rect)` signal.
+- `IAgentBehavior.decide_next_step(agent)` — parallel hook to
+  `decide_next_target`; default delegates to the bound navigator via
+  `NavigationRegistry`, so a behavior that doesn't path is untouched.
+- `EntityDef` fields (all optional, default off): `walkable: bool`,
+  `traversal_cost: float`, `network_id: StringName`,
+  `walkable_tags: Array[StringName]`. `ContentDB._compile_entities` parses
+  the matching optional columns.
+- `BalanceConfig` navigation knobs + `design/tuning/navigation.md`
+  (`## Defaults`): `nav_default_traversal_cost`,
+  `nav_default_engagement_distance`, `nav_max_path_expansions`. New
+  `ContentDB._compile_navigation` compiler.
+
+### Tests
+- 30 new GUT tests. `tests/systems/test_navigation.gd` mirrors the 9 spec
+  worked examples (simple/blocked/around-obstacle/cost-aware/tag-restricted
+  routes, engagement distance, reachable/nearest, cache invalidation,
+  incremental stepping) plus fail-soft budget, same-cell, NETWORK-metric,
+  and `score_goals`. `tests/autoload/test_navigation_registry.gd` covers the
+  reactive build, `network_changed`, plural networks, tuning-default cost,
+  the convenience queries, `rebuild_all`, and the `decide_next_step`
+  default. `tests/systems/test_navigation_perf.gd` asserts 100 agents on a
+  200-cell network hold the 60 fps frame budget (warm stepping
+  ~0.14 ms/frame on CI). Engine suite: 265 → 295. All green.
+
+### Design notes
+- **Plural networks** (seam open question 1) and **Manhattan engagement by
+  default** (open question 2), per the report's stated defaults.
+- **Deliberate scope decision:** cell `tags` carry a *single* role — access
+  gating (subset rule) — and traversal cost stays a separate authored
+  numeric. The seam report §4 floated "traversal cost by tag" and
+  "avoidance weights"; overloading one tag namespace to mean both "who may
+  enter" and "how expensive" is the muddy abstraction CLAUDE.md §10 warns
+  against, and the report itself defers avoidance (open question 4). Both
+  are noted in the spec as a follow-up seam for when a concrete game needs
+  differentiated per-tag cost.
+- Cache invalidation clears the whole route cache on any mutation (MVP);
+  the `dirty_rect` is already published so consumers can scope their own.
+  Flow-field fallback (report §5) is unneeded at the Phase-1 budget.
+
 ## v0.5.0 — 2026-05-25
 
 US-GAAP-style Accounting overlay. The cash-basis `Ledger` continues as the

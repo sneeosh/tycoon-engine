@@ -350,3 +350,15 @@ func test_traits_with_inverted_range_records_error() -> void:
 			bad_range = true
 			break
 	assert_true(bad_range, "inverted trait range should be flagged; got: %s" % str(ContentDB.load_errors))
+
+
+# --- v0.6.0: navigation defaults from tuning ------------------------------
+
+func test_real_navigation_defaults_loaded() -> void:
+	ContentDB.load_all()
+	assert_eq(ContentDB.load_errors, [] as Array[String],
+		"navigation.md must parse clean alongside the rest of design/tuning")
+	# Mirrors design/tuning/navigation.md ## Defaults
+	assert_eq(ContentDB.balance_config.nav_default_traversal_cost, 1.0)
+	assert_eq(ContentDB.balance_config.nav_default_engagement_distance, 10)
+	assert_eq(ContentDB.balance_config.nav_max_path_expansions, 4096)

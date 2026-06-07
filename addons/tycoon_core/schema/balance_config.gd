@@ -30,3 +30,13 @@ class_name BalanceConfig
 # satisfaction→spawn curve multiplier equals 1.0. Mirrors
 # design/tuning/balance.md `## Agents`.
 @export_range(0.0, 100.0) var base_spawn_rate: float = 1.0
+
+# Navigation (v0.6.0) — Spec: design/algorithms/navigation.md, mirrors
+# design/tuning/navigation.md `## Defaults`. Read by NavigationRegistry /
+# the default A* navigator.
+# Cost assigned to a walkable cell whose EntityDef.traversal_cost is <= 0.
+@export var nav_default_traversal_cost: float = 1.0
+# `d` used by within_engagement_distance when the caller passes d < 0.
+@export var nav_default_engagement_distance: int = 10
+# Fail-soft A* expansion budget (<= 0 = unbounded).
+@export var nav_max_path_expansions: int = 4096
