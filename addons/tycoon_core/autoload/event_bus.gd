@@ -49,3 +49,9 @@ signal region_changed(region_id: int)
 signal placement_added(region_id: int, index: int)
 signal placement_removed(region_id: int, index: int)
 signal placement_stranded(region_id: int, index: int)
+
+# NavigationRegistry (v0.6.0). See design/algorithms/navigation.md.
+# WalkableNetworks are derived reactively from walkable EntityInstances;
+# this fires when a network gains/loses cells. dirty_rect bounds the change
+# so consumers can scope their own cache invalidation.
+signal network_changed(network_id: StringName, dirty_rect: Rect2i)

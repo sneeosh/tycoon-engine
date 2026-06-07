@@ -43,3 +43,24 @@ class_name EntityDef
 # effective `provided_zone_tags` is the union across all member tiles.
 # Games define what these tags mean (`grass`, `water`, `sterile`, …).
 @export var zone_tags: Array[StringName] = []
+
+# --- Walkable-network fields (v0.6.0 — see design/algorithms/navigation.md) ---
+#
+# `walkable = false` means this entity contributes nothing to any
+# WalkableNetwork (existing behavior — every pre-v0.6 EntityDef defaults to
+# false). When true, NavigationRegistry adds this entity's footprint cells
+# to the network named by `network_id` as agents traverse them.
+@export var walkable: bool = false
+
+# Cost of *entering* one of this entity's cells. <= 0 means "use the tuning
+# default" (BalanceConfig.nav_default_traversal_cost).
+@export var traversal_cost: float = 1.0
+
+# Which WalkableNetwork these cells belong to. Multiple disjoint networks
+# let a game keep indoor/outdoor or staff/public routing separate; a simple
+# game leaves everything on the default network.
+@export var network_id: StringName = &"default"
+
+# Access tags an agent must carry (all of them) to enter these cells.
+# Empty = open to everyone. Games define meaning (`staff_only`, `paid`, …).
+@export var walkable_tags: Array[StringName] = []

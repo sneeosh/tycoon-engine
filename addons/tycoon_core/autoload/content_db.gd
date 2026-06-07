@@ -64,6 +64,7 @@ func load_all(dir: String = TUNING_DIR) -> void:
 	_load_file(dir, "agents.md", _compile_agents, true)
 	_load_file(dir, "placeables.md", _compile_placeables, true)
 	_load_file(dir, "progression.md", _compile_progression, true)
+	_load_file(dir, "navigation.md", _compile_navigation, true)
 
 	_validate_cross_refs()
 
@@ -230,6 +231,19 @@ func _compile_entities(parsed: Dictionary) -> void:
 			# (no depreciation, immediate expense).
 			if row.has("useful_life_days"):
 				ed.useful_life_days = _cell_int(path, row, line, "useful_life_days", 0, 1_000_000)
+				# v0.6.0 walkable-network fields (optional — see
+				# design/algorithms/navigation.md). Absent columns leave the
+				# schema defaults (walkable=false, cost 1.0, default network).
+				if row.has("walkable"):
+					ed.walkable = _cell_bool(path, row, line, "walkable", false)
+				if row.has("traversal_cost"):
+					ed.traversal_cost = _cell_float(path, row, line, "traversal_cost", 0.0, 1e9)
+				if row.has("network_id"):
+					var net_id := _cell_string_name(path, row, line, "network_id")
+					if net_id != &"":
+						ed.network_id = net_id
+				if row.has("walkable_tags"):
+					ed.walkable_tags = _cell_array_string_names(row, "walkable_tags")
 			entity_defs[ed.id] = ed
 
 	# Effects, applied to their owning entity by entity_id.
@@ -398,6 +412,17 @@ func _compile_progression(parsed: Dictionary) -> void:
 		un.reputation_required = _cell_int(path, row, line, "reputation_required", 0, 1_000_000)
 		un.unlocks = _cell_array_string_names(row, "unlocks")
 		unlock_nodes[un.id] = un
+
+
+func _compile_navigation(parsed: Dictionary) -> void:
+	# v0.6.0 — see design/algorithms/navigation.md. Optional file; a single
+	# `## Defaults` section feeds NavigationRegistry / the default A* navigator.
+	var path: String = parsed["path"]
+	var defaults := _require_section(path, parsed, "Defaults")
+	if defaults != null:
+		balance_config.nav_default_traversal_cost = _scalar_float(path, defaults, "default_traversal_cost", 0.0, 1e9)
+		balance_config.nav_default_engagement_distance = _scalar_int(path, defaults, "default_engagement_distance", 0, 1_000_000)
+		balance_config.nav_max_path_expansions = _scalar_int(path, defaults, "max_path_expansions", 0, 100_000_000)
 
 
 # --- Cross-ref validation --------------------------------------------------

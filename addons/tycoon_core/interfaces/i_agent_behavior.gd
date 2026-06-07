@@ -29,3 +29,22 @@ func on_need_threshold_crossed(_agent: Agent, _need_id: StringName) -> void:
 # Called when an agent is despawned (either by the game or by the engine).
 func on_despawn(_agent: Agent) -> void:
 	pass
+
+
+# Spec: design/algorithms/navigation.md. Pick the next cell an agent should
+# move to this tick. The default delegates to the bound INetworkNavigator
+# via NavigationRegistry, walking the network named by
+# `agent.behavior_state["nav_network_id"]` (default &"default") toward
+# `agent.behavior_state["nav_target"]`. Returns INetworkNavigator.NO_STEP
+# when there is no network or no route.
+#
+# Games that don't use networks (free-roam validation, debug harnesses)
+# simply never call this — the existing IAgentBehavior contract is intact.
+# Games that do path can override for per-archetype routing, or rely on the
+# default and just set nav_target on the agent.
+func decide_next_step(agent: Agent) -> Vector2i:
+	var net_id: StringName = agent.behavior_state.get("nav_network_id", NavigationRegistry.DEFAULT_NETWORK)
+	var network: WalkableNetwork = NavigationRegistry.get_network(net_id)
+	if network == null:
+		return INetworkNavigator.NO_STEP
+	return NavigationRegistry.navigator.step(agent, network)
