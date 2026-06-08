@@ -231,19 +231,19 @@ func _compile_entities(parsed: Dictionary) -> void:
 			# (no depreciation, immediate expense).
 			if row.has("useful_life_days"):
 				ed.useful_life_days = _cell_int(path, row, line, "useful_life_days", 0, 1_000_000)
-				# v0.6.0 walkable-network fields (optional — see
-				# design/algorithms/navigation.md). Absent columns leave the
-				# schema defaults (walkable=false, cost 1.0, default network).
-				if row.has("walkable"):
-					ed.walkable = _cell_bool(path, row, line, "walkable", false)
-				if row.has("traversal_cost"):
-					ed.traversal_cost = _cell_float(path, row, line, "traversal_cost", 0.0, 1e9)
-				if row.has("network_id"):
-					var net_id := _cell_string_name(path, row, line, "network_id")
-					if net_id != &"":
-						ed.network_id = net_id
-				if row.has("walkable_tags"):
-					ed.walkable_tags = _cell_array_string_names(row, "walkable_tags")
+			# v0.6.0 walkable-network fields (optional — see
+			# design/algorithms/navigation.md). Absent columns leave the
+			# schema defaults (walkable=false, cost 1.0, default network).
+			if row.has("walkable"):
+				ed.walkable = _cell_bool(path, row, line, "walkable", false)
+			if row.has("traversal_cost"):
+				ed.traversal_cost = _cell_float(path, row, line, "traversal_cost", 0.0, 1e9)
+			if row.has("network_id"):
+				var net_id := _cell_string_name(path, row, line, "network_id")
+				if net_id != &"":
+					ed.network_id = net_id
+			if row.has("walkable_tags"):
+				ed.walkable_tags = _cell_array_string_names(row, "walkable_tags")
 			entity_defs[ed.id] = ed
 
 	# Effects, applied to their owning entity by entity_id.
