@@ -7,6 +7,25 @@ The engine follows semver: `MAJOR.MINOR.PATCH` where MAJOR bumps break
 schema/interface compatibility, MINOR bumps add capabilities without
 breaking existing games, and PATCH bumps are bug fixes.
 
+## v0.6.1 — 2026-06-08
+
+Bug fix for the v0.6.0 navigation seam.
+
+### Fixed
+- `ContentDB._compile_entities`: the walkable-network column parsing
+  (`walkable`, `traversal_cost`, `network_id`, `walkable_tags`) was nested
+  inside the `useful_life_days` branch, so an `entities.md` row without a
+  `useful_life_days` column never parsed `walkable` — **no tile ever
+  registered as walkable** when loaded from markdown. Moved the block to the
+  correct scope. The v0.6.0 tests only constructed `EntityDef`s in code and
+  missed the markdown path.
+
+### Tests
+- `tests/loader/test_walkable_loading.gd` — drives the full markdown →
+  ContentDB → NavigationRegistry path: walkable parses without a
+  `useful_life_days` column, and a markdown-declared walkable tile registers
+  a network cell once placed. Suite: 295 → 297.
+
 ## v0.6.0 — 2026-06-07
 
 Agent navigation on a constrained walkable network — the generic tycoon
