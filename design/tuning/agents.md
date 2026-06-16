@@ -10,14 +10,20 @@ every agent_id / need_id referenced here exists.
 Behavior, value, and satisfaction model scripts are game-side extension
 points — they are NOT defined in tuning. Games assign them in code via
 ContentDB once content is loaded.
+
+`drives_spawn_balance` is OPTIONAL (default true). Leave it true for any
+population whose satisfaction is "customer demand" — those agents feed the
+self-balancing spawn curve. Set it false for a second population whose
+wellbeing is its OWN meter (e.g. a welfare meter, not arrival demand) so its
+satisfaction can't suppress or inflate new arrivals.
 -->
 
 ## Agent types
 
-| id      | display_name  | spawn_weight |
-| ------- | ------------- | ------------ |
-| visitor | Visitor       | 1.0          |
-| premium | Premium Guest | 0.3          |
+| id      | display_name  | spawn_weight | drives_spawn_balance |
+| ------- | ------------- | ------------ | -------------------- |
+| visitor | Visitor       | 1.0          | true                 |
+| premium | Premium Guest | 0.3          | true                 |
 
 ## Need specs
 

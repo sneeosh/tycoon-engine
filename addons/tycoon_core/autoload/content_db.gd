@@ -282,6 +282,10 @@ func _compile_agents(parsed: Dictionary) -> void:
 				continue
 			at.display_name = row.get("display_name", String(at.id))
 			at.spawn_weight = _cell_float(path, row, line, "spawn_weight", 0.0, 100.0)
+			# v0.7.0 spawn-balance flag — optional column, defaults to true so
+			# absent columns and pre-v0.7 tuning behave exactly as before.
+			if row.has("drives_spawn_balance"):
+				at.drives_spawn_balance = _cell_bool(path, row, line, "drives_spawn_balance", true)
 			agent_types[at.id] = at
 
 	# Need specs — attach Needs to AgentTypes with overrides.
