@@ -7,6 +7,53 @@ The engine follows semver: `MAJOR.MINOR.PATCH` where MAJOR bumps break
 schema/interface compatibility, MINOR bumps add capabilities without
 breaking existing games, and PATCH bumps are bug fixes.
 
+## v0.7.0 — 2026-06-16
+
+Spawn-balance seam. `AgentPool.compute_aggregate_satisfaction()` feeds the
+self-balancing spawn curve (arrival demand). Until now it averaged over
+*every* live agent, so a game adding a second agent population whose
+wellbeing is its own meter — not customer happiness — would have that
+population's satisfaction leak into guest arrival demand (a miserable
+second-population agent suppressing new arrivals). Additive and fully
+back-compatible: the new flag defaults to true, so every existing game
+behaves exactly as before until it opts a population out.
+
+### Added
+- `AgentType.drives_spawn_balance: bool` (default `true`) — when false, the
+  population's satisfaction is excluded from the aggregate that drives the
+  spawn curve. Author it via the optional `drives_spawn_balance` column in
+  the `## Agent types` table of `agents.md`; absent column → true.
+- `ContentDB._compile_agents` parses the optional `drives_spawn_balance`
+  column.
+
+### Behavior changes
+- `AgentPool.compute_aggregate_satisfaction()` now averages only over agents
+  whose type drives spawn balance. With no qualifying agents (empty park, or
+  a park holding *only* opted-out agents) it returns the neutral 0.5, exactly
+  as the empty-park case did before — so arrival demand never collapses to
+  zero. A type that can't be resolved is treated as driving (true), matching
+  pre-v0.7 behavior.
+
+### Tests
+- 6 new GUT tests: schema default, aggregate excludes a non-driving
+  population, all-non-driving park stays neutral, a miserable non-driving
+  population leaves the spawn multiplier unchanged, plus loader coverage for
+  the new column (parsed true/false, and absent → true). Engine suite:
+  295 → 301. All green.
+
+## v0.6.1 — 2026-06-07
+
+Patch release. No schema or interface changes — this is the first *tagged*
+cut of the navigation surface, so downstream games can pin a real semver tag
+instead of a bare commit.
+
+### Fixed
+- `ContentDB._compile_entities` parsed the v0.6.0 walkable-network columns
+  (`walkable`, `traversal_cost`, `network_id`, `walkable_tags`) nested inside
+  the `useful_life_days` branch, so an entities table that set the walkable
+  columns *without* a `useful_life_days` column silently skipped them. The
+  walkable-column parsing is now un-nested and evaluated independently.
+
 ## v0.6.0 — 2026-06-07
 
 Agent navigation on a constrained walkable network — the generic tycoon

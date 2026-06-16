@@ -227,6 +227,54 @@ func test_compute_aggregate_satisfaction_with_no_agents_returns_neutral() -> voi
 	assert_eq(AgentPool.compute_aggregate_satisfaction(), 0.5)
 
 
+# --- v0.7.0 spawn-balance flag -------------------------------------------
+
+func test_default_agent_type_drives_spawn_balance() -> void:
+	# Additive flag defaults to true → pre-v0.7 averaging is unchanged.
+	assert_true(AgentType.new().drives_spawn_balance)
+
+
+func test_aggregate_excludes_non_spawn_driving_population() -> void:
+	# TEST_TYPE drives balance (default true); TEST_TYPE_B opts out.
+	ContentDB.get_agent_type(TEST_TYPE_B).drives_spawn_balance = false
+	var driving := AgentPool.spawn(TEST_TYPE)
+	var welfare_a := AgentPool.spawn(TEST_TYPE_B)
+	var welfare_b := AgentPool.spawn(TEST_TYPE_B)
+	AgentPool.get_agent(driving).satisfaction = 0.8
+	AgentPool.get_agent(welfare_a).satisfaction = 0.0  # miserable, must NOT count
+	AgentPool.get_agent(welfare_b).satisfaction = 0.0
+	# Only the driving agent counts → aggregate is its 0.8, not the blended
+	# (0.8 + 0 + 0) / 3 ≈ 0.27 you'd get if the welfare population leaked in.
+	assert_almost_eq(AgentPool.compute_aggregate_satisfaction(), 0.8, 0.0001)
+
+
+func test_aggregate_neutral_when_only_non_driving_agents_present() -> void:
+	ContentDB.get_agent_type(TEST_TYPE_B).drives_spawn_balance = false
+	var w := AgentPool.spawn(TEST_TYPE_B)
+	AgentPool.get_agent(w).satisfaction = 0.0
+	# No spawn-driving agents → neutral 0.5, so an all-welfare park doesn't
+	# collapse arrival demand to zero.
+	assert_eq(AgentPool.compute_aggregate_satisfaction(), 0.5)
+
+
+func test_non_driving_population_does_not_move_spawn_multiplier() -> void:
+	# A park with only driving agents vs. the same park that ALSO has a
+	# miserable non-driving population must produce an identical spawn
+	# multiplier — the hungry-animal-suppresses-visitors bug, proven absent.
+	ContentDB.get_agent_type(TEST_TYPE_B).drives_spawn_balance = false
+	var d := AgentPool.spawn(TEST_TYPE)
+	AgentPool.get_agent(d).satisfaction = 0.7
+	EventBus.day_ended.emit(1)
+	var mult_without := AgentPool.current_spawn_multiplier
+
+	var w := AgentPool.spawn(TEST_TYPE_B)
+	AgentPool.get_agent(w).satisfaction = 0.0  # hungry second population
+	EventBus.day_ended.emit(2)
+	var mult_with := AgentPool.current_spawn_multiplier
+	assert_almost_eq(mult_with, mult_without, 0.0001,
+		"a miserable non-driving population must not change arrival demand")
+
+
 func test_day_ended_updates_spawn_multiplier_from_aggregate() -> void:
 	# Force a known satisfaction via a spy, then trigger day_ended.
 	var spy := SpySatisfactionModel.new()  # sets satisfaction = 0.42

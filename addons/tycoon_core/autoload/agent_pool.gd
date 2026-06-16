@@ -174,15 +174,25 @@ func spawn_curve(satisfaction: float) -> float:
 	return bc.spawn_curve_min_multiplier + (bc.spawn_curve_max_multiplier - bc.spawn_curve_min_multiplier) * sigmoid
 
 
-# Mean satisfaction across live agents, or 0.5 when no agents (so the spawn
-# rate doesn't collapse to zero on an empty park).
+# Mean satisfaction across live agents that drive arrival demand, or 0.5 when
+# none qualify (so the spawn rate doesn't collapse to zero on an empty park).
+#
+# Agents whose AgentType has `drives_spawn_balance == false` are excluded: a
+# second population with its own welfare meter (not customer happiness) must
+# not leak into how many new arrivals the sim spawns. A type that can't be
+# resolved is treated as driving (true) to preserve pre-v0.7 behavior.
 func compute_aggregate_satisfaction() -> float:
-	if agents.is_empty():
-		return 0.5
 	var total: float = 0.0
+	var count: int = 0
 	for a: Agent in agents.values():
+		var t: AgentType = a.get_type()
+		if t != null and not t.drives_spawn_balance:
+			continue
 		total += a.satisfaction
-	return total / agents.size()
+		count += 1
+	if count == 0:
+		return 0.5
+	return total / count
 
 
 # --- Per-tick simulation --------------------------------------------------

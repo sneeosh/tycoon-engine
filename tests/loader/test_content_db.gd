@@ -75,6 +75,43 @@ func test_real_agents_loaded_with_need_specs() -> void:
 	assert_not_null(visitor)
 	assert_eq(visitor.needs.size(), 2, "visitor has hunger + thirst specs")
 	assert_eq(visitor.needs[0].need.id, &"hunger")
+	assert_true(visitor.drives_spawn_balance,
+		"real tuning leaves visitor driving the spawn curve")
+
+
+func test_agents_drives_spawn_balance_column_parsed() -> void:
+	# v0.7.0 — the optional column maps true/false onto the schema flag.
+	_clear_fixtures()
+	_write("balance.md", _minimal_balance_md())
+	_write("economy.md", _minimal_economy_md())
+	_write("agents.md", """## Agent types
+
+| id      | display_name | spawn_weight | drives_spawn_balance |
+| ------- | ------------ | ------------ | -------------------- |
+| guest   | Guest        | 1.0          | true                 |
+| critter | Critter      | 1.0          | false                |
+""")
+	ContentDB.load_all(TMP_DIR)
+	assert_eq(ContentDB.load_errors, [] as Array[String])
+	assert_true(ContentDB.get_agent_type(&"guest").drives_spawn_balance)
+	assert_false(ContentDB.get_agent_type(&"critter").drives_spawn_balance)
+
+
+func test_agents_without_drives_spawn_balance_column_default_true() -> void:
+	# Absent column → default true, so pre-v0.7 tuning loads unchanged.
+	_clear_fixtures()
+	_write("balance.md", _minimal_balance_md())
+	_write("economy.md", _minimal_economy_md())
+	_write("agents.md", """## Agent types
+
+| id    | display_name | spawn_weight |
+| ----- | ------------ | ------------ |
+| guest | Guest        | 1.0          |
+""")
+	ContentDB.load_all(TMP_DIR)
+	assert_eq(ContentDB.load_errors, [] as Array[String])
+	assert_true(ContentDB.get_agent_type(&"guest").drives_spawn_balance,
+		"absent column defaults to true (back-compat)")
 
 
 func test_real_entities_loaded_with_effects_and_appeal() -> void:
